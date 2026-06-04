@@ -166,7 +166,6 @@ export default function App() {
 
   // ── Sheriff ──
   const aiSheriffElect = async () => {
-    // AI picks candidates — then STOPS and waits for human to click
     setBusy(true);
     const cands:number[]=[];
     for (const p of gs.players.filter(pl=>!pl.isHuman&&pl.isAlive)) {
@@ -174,7 +173,7 @@ export default function App() {
       if (run) cands.push(p.id);
     }
     setBusy(false);
-    // Only update candidates, do NOT call advance() — wait for human button
+    // Update candidates AND mark done together so render sees both at once
     setGs(p=>({...p,sheriffCandidates:cands}));
     setSheriffElectDone(true);
   };
@@ -554,7 +553,7 @@ export default function App() {
                 )}
 
                 {/* Night waiting */}
-                {((phase===Phase.NIGHT_WOLVES&&hr!==Role.WEREWOLF)||(phase===Phase.NIGHT_SEER&&hr!==Role.SEER)||(phase===Phase.NIGHT_WITCH&&hr!==Role.WITCH)||(phase===Phase.NIGHT_GUARD&&hr!==Role.GUARD))&&(
+                {!phase.startsWith('SHERIFF')&&((phase===Phase.NIGHT_WOLVES&&hr!==Role.WEREWOLF)||(phase===Phase.NIGHT_SEER&&hr!==Role.SEER)||(phase===Phase.NIGHT_WITCH&&hr!==Role.WITCH)||(phase===Phase.NIGHT_GUARD&&hr!==Role.GUARD))&&(
                   <p className="text-center opacity-25 text-sm italic">黑夜漫漫，请闭眼...</p>
                 )}
 
@@ -568,20 +567,17 @@ export default function App() {
                   </Panel>
                 )}
 
-                {/* Sheriff Elect — wait for AI to finish, then show buttons */}
-                {phase===Phase.SHERIFF_ELECT&&sheriffElectDone&&(
+                {/* Sheriff Elect */}
+                {phase===Phase.SHERIFF_ELECT&&(
                   <Panel label="警长竞选：你要上警吗？" color="#fbbf24">
                     <div className="text-xs text-center mb-3 opacity-40">
-                      已上警：{gs.sheriffCandidates.length>0?gs.sheriffCandidates.map(id=>`${id}号`).join('、'):'暂无'}
+                      已上警AI：{gs.sheriffCandidates.length>0?gs.sheriffCandidates.map(id=>`${id}号`).join('、'):'暂无（AI还在决定中）'}
                     </div>
                     <Btns>
                       <Btn color="#fbbf24" onClick={()=>hSheriffElect(true)}>⬆️ 参与竞选</Btn>
                       <Btn color="#555" onClick={()=>hSheriffElect(false)}>放弃竞选</Btn>
                     </Btns>
                   </Panel>
-                )}
-                {phase===Phase.SHERIFF_ELECT&&!sheriffElectDone&&(
-                  <p className="text-center opacity-25 text-sm italic">AI 玩家正在决定是否上警...</p>
                 )}
 
                 {/* Sheriff Speech */}
