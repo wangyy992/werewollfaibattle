@@ -10,7 +10,8 @@ import { PLAYER_COUNT, ROLE_LABELS, ROLE_ICONS } from './constants';
 import { initializePlayers, checkWinner, getSide } from './lib/gameUtils';
 import {
   generateAIDiscussion, generateAIVote, generateAINightAction,
-  generateAIGuardAction, generateAISheriffChoice, generateAISheriffAction
+  generateAIGuardAction, generateAISheriffChoice, generateAISheriffAction,
+  generateAIWolfKill
 } from './services/geminiService';
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
@@ -485,9 +486,25 @@ export default function App() {
       message: targetId ? `你守护了${targetId}号。` : '你选择空守。' });
     nextPhase();
   };
-  const humanKill = (id: number) => {
-    setGameState(prev => ({ ...prev, nightKilledId: id }));
-    addLog({ day: gameState.day, phase: Phase.NIGHT_WOLVES, type: 'wolf', message: `你选择击杀${id}号。` });
+  const humanKillVote = async (myVote: number) => {
+    setIsProcessing(true);
+    const votes: Record<number, number> = { 1: myVote };
+    const aiWolves = gameState.players.filter(
+      p => p.role === Role.WEREWOLF && p.isAlive && !p.isHuman
+    );
+    for (const wolf of aiWolves) {
+      const targetId = await generateAIWolfKill(wolf, gameState) as number | null;
+      if (targetId) votes[wolf.id] = targetId;
+    }
+    // 取票数最多的目标
+    const counts: Record<number, number> = {};
+    Object.values(votes).forEach(id => counts[id] = (counts[id] || 0) + 1);
+    const finalTarget = +Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+    const voteLog = Object.entries(votes).map(([w, t]) => `${w}号投${t}号`).join('、');
+    addLog({ day: gameState.day, phase: Phase.NIGHT_WOLVES, type: 'wolf',
+      message: `[狼队内部] 投票：${voteLog} → 最终击杀${finalTarget}号。` });
+    setGameState(prev => ({ ...prev, nightKilledId: finalTarget }));
+    setIsProcessing(false);
     nextPhase();
   };
   const humanCheck = (id: number) => {
@@ -732,10 +749,20 @@ export default function App() {
 
                 {/* Wolf Kill */}
                 {phase === Phase.NIGHT_WOLVES && humanRole === Role.WEREWOLF && (
-                  <ActionPanel label="选择今晚击杀目标" icon={<Swords className="w-4 h-4" />} color="#c0392b">
+                  <ActionPanel label="狼人行动：选择击杀目标" icon={<Swords className="w-4 h-4" />} color="#c0392b">
+                    <div className="text-center text-xs mb-3 px-3 py-2 rounded-lg"
+                      style={{ background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.3)' }}>
+                      <span className="opacity-60">🐺 你的狼队友：</span>
+                      <span className="font-bold ml-1" style={{ color: '#e05252' }}>
+                        {gameState.players
+                          .filter(p => p.role === Role.WEREWOLF && p.id !== 1 && p.isAlive)
+                          .map(p => `${p.id}号`).join('、') || '（无存活队友）'}
+                      </span>
+                      <div className="text-[10px] opacity-40 mt-1">所有狼人各自投票，票数最多的目标被击杀</div>
+                    </div>
                     <div className="flex flex-wrap gap-2 justify-center">
                       {alivePlayers.filter(p => p.role !== Role.WEREWOLF).map(p => (
-                        <ActionBtn key={p.id} onClick={() => humanKill(p.id)} color="#c0392b">{p.id}号</ActionBtn>
+                        <ActionBtn key={p.id} onClick={() => humanKillVote(p.id)} color="#c0392b">{p.id}号</ActionBtn>
                       ))}
                     </div>
                   </ActionPanel>
