@@ -567,18 +567,7 @@ export default function App() {
                   </Panel>
                 )}
 
-                {/* Sheriff Elect */}
-                {phase===Phase.SHERIFF_ELECT&&(
-                  <Panel label="警长竞选：你要上警吗？" color="#fbbf24">
-                    <div className="text-xs text-center mb-3 opacity-40">
-                      已上警AI：{gs.sheriffCandidates.length>0?gs.sheriffCandidates.map(id=>`${id}号`).join('、'):'暂无（AI还在决定中）'}
-                    </div>
-                    <Btns>
-                      <Btn color="#fbbf24" onClick={()=>hSheriffElect(true)}>⬆️ 参与竞选</Btn>
-                      <Btn color="#555" onClick={()=>hSheriffElect(false)}>放弃竞选</Btn>
-                    </Btns>
-                  </Panel>
-                )}
+                {/* Sheriff Elect — moved outside busy block below */}
 
                 {/* Sheriff Speech */}
                 {phase===Phase.SHERIFF_SPEECH&&gs.currentDiscussionIndex===1&&(
@@ -680,6 +669,21 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          {/* Sheriff Elect always visible regardless of busy state */}
+          {phase===Phase.SHERIFF_ELECT&&(
+            <motion.div initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} className="w-full max-w-2xl mx-auto mt-2">
+              <Panel label="警长竞选：你要上警吗？" color="#fbbf24">
+                <div className="text-xs text-center mb-3 opacity-40">
+                  {busy?'AI 玩家正在决定是否上警...':'已上警AI：'+( gs.sheriffCandidates.length>0?gs.sheriffCandidates.map((id:number)=>`${id}号`).join('、'):'暂无')}
+                </div>
+                <Btns>
+                  <Btn color="#fbbf24" onClick={()=>hSheriffElect(true)}>⬆️ 参与竞选</Btn>
+                  <Btn color="#555" onClick={()=>hSheriffElect(false)}>放弃竞选</Btn>
+                </Btns>
+              </Panel>
+            </motion.div>
+          )}
         </div>
       </main>
     </div>
