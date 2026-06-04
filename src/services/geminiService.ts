@@ -5,6 +5,7 @@ import { SYSTEM_PROMPT, ROLE_LABELS } from "../constants";
 const ai = new OpenAI({
   apiKey: import.meta.env.VITE_DEEPSEEK_API_KEY || "",
   baseURL: "https://api.deepseek.com",
+  dangerouslyAllowBrowser: true,
 });
 const MODEL = "deepseek-v4-flash";
 
