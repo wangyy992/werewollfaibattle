@@ -506,11 +506,10 @@ export default function App() {
         </div>
 
         {/* Action Panel */}
-        <div className="flex-shrink-0 px-5 py-4 min-h-28 flex items-center justify-center"
+        <div className="flex-shrink-0 px-5 py-4 min-h-28 flex items-center justify-center relative"
           style={{background:'rgba(0,0,0,0.5)',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
           <AnimatePresence mode="wait">
-            {!busy?(
-              <motion.div key={phase+gs.currentDiscussionIndex} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0}} className="w-full max-w-2xl">
+            <motion.div key={phase+gs.currentDiscussionIndex} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0}} className="w-full max-w-2xl">
 
                 {/* Guard */}
                 {phase===Phase.NIGHT_GUARD&&hr===Role.GUARD&&(
@@ -658,31 +657,17 @@ export default function App() {
                   </div>
                 )}
 
-              </motion.div>
-            ):(
-              <motion.div className="flex items-center gap-3">
-                {[0,1,2].map(i=>(
-                  <motion.div key={i} className="w-2 h-2 rounded-full" style={{background:'#e8c97a'}}
-                    animate={{scale:[1,1.6,1],opacity:[0.3,1,0.3]}}
-                    transition={{duration:1,repeat:Infinity,delay:i*0.2}}/>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          {/* Sheriff Elect always visible regardless of busy state */}
-          {phase===Phase.SHERIFF_ELECT&&(
-            <motion.div initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} className="w-full max-w-2xl mx-auto mt-2">
-              <Panel label="警长竞选：你要上警吗？" color="#fbbf24">
-                <div className="text-xs text-center mb-3 opacity-40">
-                  {busy?'AI 玩家正在决定是否上警...':'已上警AI：'+( gs.sheriffCandidates.length>0?gs.sheriffCandidates.map((id:number)=>`${id}号`).join('、'):'暂无')}
-                </div>
-                <Btns>
-                  <Btn color="#fbbf24" onClick={()=>hSheriffElect(true)}>⬆️ 参与竞选</Btn>
-                  <Btn color="#555" onClick={()=>hSheriffElect(false)}>放弃竞选</Btn>
-                </Btns>
-              </Panel>
             </motion.div>
+          </AnimatePresence>
+          {/* AI thinking indicator - shown on top, doesn't block buttons */}
+          {busy&&(
+            <div className="absolute bottom-2 right-4 flex items-center gap-1.5">
+              {[0,1,2].map(i=>(
+                <motion.div key={i} className="w-1.5 h-1.5 rounded-full" style={{background:'#e8c97a'}}
+                  animate={{opacity:[0.2,1,0.2]}} transition={{duration:1,repeat:Infinity,delay:i*0.25}}/>
+              ))}
+              <span className="text-[10px] opacity-40 ml-1">AI思考中</span>
+            </div>
           )}
         </div>
       </main>
