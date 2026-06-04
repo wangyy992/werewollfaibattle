@@ -253,6 +253,7 @@ export default function App() {
     setGs(p=>({...p,currentDiscussionIndex:next}));
   };
   const startDiscussion=(dir:1|-1=1)=>{
+    processed.current.clear(); // 每轮发言开始时重置
     const alive=gs.players.filter(p=>p.isAlive).map(p=>p.id).sort((a,b)=>a-b);
     let start=alive[0];
     if (gs.lastNightDeaths.length>0){const ld=gs.lastNightDeaths[gs.lastNightDeaths.length-1];const af=alive.filter(id=>id>ld);start=af.length>0?af[0]:alive[0];}
@@ -264,7 +265,7 @@ export default function App() {
     const isSheriff=gs.phase===Phase.SHERIFF_SPEECH;
     log({day:gs.day,phase:gs.phase,type:'discussion',playerName:'你',message:s});
     setSpeech('');
-    processed.current.add(1);
+    if (!processed.current.has(1)) processed.current.add(1);
     const parts=isSheriff?gs.sheriffCandidates:gs.players.filter(p=>p.isAlive).map(p=>p.id).sort((a,b)=>a-b);
     moveNext(parts,1,isSheriff);
   };
