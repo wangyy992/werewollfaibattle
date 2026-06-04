@@ -217,58 +217,142 @@ export default function App() {
     if (!gs.hunterMustShoot) advance();
   };
 
-  // ── Discussion ──
-  useEffect(()=>{
-    const {phase,currentDiscussionIndex:ci,players}=gs;
-    if (phase!==Phase.DAY_DISCUSSION&&phase!==Phase.SHERIFF_SPEECH) return;
-    if (ci<0||busy) return;
-    const isSheriff=phase===Phase.SHERIFF_SPEECH;
-    const parts=isSheriff?gs.sheriffCandidates:players.filter(p=>p.isAlive).map(p=>p.id).sort((a,b)=>a-b);
-    if (!isSheriff&&processed.current.size>=parts.length){setTimeout(()=>{setGs(p=>({...p,currentDiscussionIndex:-1}));advance();},600);return;}
-    const player=players.find(p=>p.id===ci);
-    if (!player||processed.current.has(ci)){moveNext(parts,ci,isSheriff);return;}
-    if (player.isHuman) return;
-    const run=async()=>{
-      setBusy(true);
-      try{
-        const s=await generateAIDiscussion(player,gs);
-        log({day:gs.day,phase,type:'discussion',playerName:`${player.id}号`,message:s});
-        processed.current.add(player.id);
-        setTimeout(()=>moveNext(parts,ci,isSheriff),1000);
-      }catch{processed.current.add(player.id);moveNext(parts,ci,isSheriff);}
-      finally{setBusy(false);}
-    };
-    run();
-  },[gs.phase,gs.currentDiscussionIndex,busy]);
+  // ── Discussion — queue-based, no busy dependency ──
+  const speakingRef = useRef(false); // prevent concurrent AI calls
 
-  const moveNext=(parts:number[],cur:number,isSheriff:boolean)=>{
-    const pos=parts.indexOf(cur);
-    if (pos===-1||pos>=parts.length-1){
-      setGs(p=>({...p,currentDiscussionIndex:-1}));
-      if (isSheriff) advance();
-      return;
+  const runDiscussionQueue = async (
+    queue: number[],
+    isSheriff: boolean,
+    currentGs: GameState
+  ) => {
+    for (const id of queue) {
+      const player = currentGs.players.find(p => p.id === id);
+      if (!player || !player.isAlive) continue;
+
+      if (player.isHuman) {
+        // Stop and wait for human input — setGs to this id and return
+        setGs(p => ({ ...p, currentDiscussionIndex: id }));
+        return; // Human will call continueDiscussion() when done
+      }
+
+      // AI speaks
+      setGs(p => ({ ...p, currentDiscussionIndex: id }));
+      setBusy(true);
+      try {
+        const s = await generateAIDiscussion(player, currentGs);
+        log({ day: currentGs.day, phase: currentGs.phase, type: 'discussion', playerName: `${id}号`, message: s });
+        await new Promise(r => setTimeout(r, 900));
+      } catch {
+        // skip on error
+      }
+      setBusy(false);
     }
-    const dir=gs.discussionDirection;
-    const next=isSheriff?parts[pos+1]:parts[(pos+dir+parts.length)%parts.length];
-    setGs(p=>({...p,currentDiscussionIndex:next}));
+    // All done
+    setGs(p => ({ ...p, currentDiscussionIndex: -1 }));
+    if (isSheriff) advance();
+    else advance();
   };
-  const startDiscussion=(dir:1|-1=1)=>{
-    processed.current.clear(); // 每轮发言开始时重置
-    const alive=gs.players.filter(p=>p.isAlive).map(p=>p.id).sort((a,b)=>a-b);
-    let start=alive[0];
-    if (gs.lastNightDeaths.length>0){const ld=gs.lastNightDeaths[gs.lastNightDeaths.length-1];const af=alive.filter(id=>id>ld);start=af.length>0?af[0]:alive[0];}
-    if (gs.sheriffId) log({day:gs.day,phase:Phase.DAY_DISCUSSION,type:'system',message:`警长决定${dir===1?'顺时针':'逆时针'}发言，从${start}号开始。`});
-    setGs(p=>({...p,currentDiscussionIndex:start,discussionDirection:dir}));
+
+  const startDiscussion = (dir: 1 | -1 = 1) => {
+    if (speakingRef.current) return;
+    const alive = gs.players.filter(p => p.isAlive).map(p => p.id).sort((a, b) => a - b);
+    let start = alive[0];
+    if (gs.lastNightDeaths.length > 0) {
+      const ld = gs.lastNightDeaths[gs.lastNightDeaths.length - 1];
+      const af = alive.filter(id => id > ld);
+      start = af.length > 0 ? af[0] : alive[0];
+    }
+    // Build ordered queue starting from start
+    const startIdx = alive.indexOf(start);
+    const queue = dir === 1
+      ? [...alive.slice(startIdx), ...alive.slice(0, startIdx)]
+      : [...alive.slice(0, startIdx + 1).reverse(), ...alive.slice(startIdx + 1).reverse()];
+
+    if (gs.sheriffId) log({ day: gs.day, phase: Phase.DAY_DISCUSSION, type: 'system',
+      message: `警长决定${dir === 1 ? '顺时针' : '逆时针'}发言，从${start}号开始。` });
+
+    speakingRef.current = true;
+    setGs(p => ({ ...p, discussionDirection: dir, currentDiscussionIndex: queue[0] }));
+    runDiscussionQueue(queue, false, gs).finally(() => { speakingRef.current = false; });
   };
-  const submitSpeech=()=>{
-    const s=speech.trim()||'（过）';
-    const isSheriff=gs.phase===Phase.SHERIFF_SPEECH;
-    log({day:gs.day,phase:gs.phase,type:'discussion',playerName:'你',message:s});
+
+  // Called after human submits speech — continues the queue
+  const continueDiscussion = () => {
+    const alive = gs.players.filter(p => p.isAlive).map(p => p.id).sort((a, b) => a - b);
+    const ci = gs.currentDiscussionIndex;
+    const dir = gs.discussionDirection;
+    const startIdx = alive.indexOf(ci);
+    // Build remaining queue after current human
+    let remaining: number[];
+    if (dir === 1) {
+      remaining = [...alive.slice(startIdx + 1), ...alive.slice(0, startIdx)];
+    } else {
+      const rev = [...alive].reverse();
+      const revIdx = rev.indexOf(ci);
+      remaining = rev.slice(revIdx + 1);
+    }
+    // Filter out already-spoken: use a simple check — anyone with id < ci in forward direction
+    // Actually just run the remaining list; AI will re-check isAlive
+    speakingRef.current = true;
+    runDiscussionQueue(remaining, false, gs).finally(() => { speakingRef.current = false; });
+  };
+
+  const submitSpeech = () => {
+    const s = speech.trim() || '（过）';
+    const isSheriff = gs.phase === Phase.SHERIFF_SPEECH;
+    log({ day: gs.day, phase: gs.phase, type: 'discussion', playerName: '你', message: s });
     setSpeech('');
-    if (!processed.current.has(1)) processed.current.add(1);
-    const parts=isSheriff?gs.sheriffCandidates:gs.players.filter(p=>p.isAlive).map(p=>p.id).sort((a,b)=>a-b);
-    moveNext(parts,1,isSheriff);
+
+    if (isSheriff) {
+      // Sheriff speech: find next candidate
+      const cands = gs.sheriffCandidates;
+      const pos = cands.indexOf(1);
+      if (pos < cands.length - 1) {
+        const next = cands[pos + 1];
+        setGs(p => ({ ...p, currentDiscussionIndex: next }));
+        // Trigger AI speech for next
+        const nextPlayer = gs.players.find(p => p.id === next);
+        if (nextPlayer && !nextPlayer.isHuman) {
+          setBusy(true);
+          generateAIDiscussion(nextPlayer, gs).then(sp => {
+            log({ day: gs.day, phase: gs.phase, type: 'discussion', playerName: `${next}号`, message: sp });
+            setGs(p => ({ ...p, currentDiscussionIndex: -1 }));
+            setBusy(false);
+            advance();
+          }).catch(() => { setBusy(false); advance(); });
+        } else {
+          setGs(p => ({ ...p, currentDiscussionIndex: next }));
+        }
+      } else {
+        setGs(p => ({ ...p, currentDiscussionIndex: -1 }));
+        advance();
+      }
+    } else {
+      continueDiscussion();
+    }
   };
+
+  // Sheriff speech queue
+  useEffect(() => {
+    if (gs.phase !== Phase.SHERIFF_SPEECH) return;
+    if (gs.currentDiscussionIndex <= 0) return;
+    const player = gs.players.find(p => p.id === gs.currentDiscussionIndex);
+    if (!player || player.isHuman) return;
+    setBusy(true);
+    generateAIDiscussion(player, gs).then(s => {
+      log({ day: gs.day, phase: gs.phase, type: 'discussion', playerName: `${player.id}号`, message: s });
+      const cands = gs.sheriffCandidates;
+      const pos = cands.indexOf(player.id);
+      if (pos < cands.length - 1) {
+        const next = cands[pos + 1];
+        setGs(p => ({ ...p, currentDiscussionIndex: next }));
+      } else {
+        setGs(p => ({ ...p, currentDiscussionIndex: -1 }));
+        advance();
+      }
+      setBusy(false);
+    }).catch(() => { setBusy(false); advance(); });
+  }, [gs.phase, gs.currentDiscussionIndex]);
 
   // ── Day Vote ──
   const humanVote=async(tid:number|null)=>{
