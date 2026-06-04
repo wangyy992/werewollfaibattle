@@ -566,7 +566,18 @@ export default function App() {
                   </Panel>
                 )}
 
-                {/* Sheriff Elect — moved outside busy block below */}
+                {/* Sheriff Elect */}
+                {phase===Phase.SHERIFF_ELECT&&(
+                  <Panel label="警长竞选：你要上警吗？" color="#fbbf24">
+                    <div className="text-xs text-center mb-3 opacity-50">
+                      已上警AI：{gs.sheriffCandidates.length>0?gs.sheriffCandidates.map((id:number)=>`${id}号`).join('、'):'（AI决定中...）'}
+                    </div>
+                    <Btns>
+                      <Btn color="#fbbf24" onClick={()=>hSheriffElect(true)}>⬆️ 参与竞选</Btn>
+                      <Btn color="#555" onClick={()=>hSheriffElect(false)}>放弃竞选</Btn>
+                    </Btns>
+                  </Panel>
+                )}
 
                 {/* Sheriff Speech */}
                 {phase===Phase.SHERIFF_SPEECH&&gs.currentDiscussionIndex===1&&(
