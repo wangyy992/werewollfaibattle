@@ -1,12 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import {
-  Moon, Sun, Shield, Eye, Skull, Trophy,
-  ChevronRight, Send, RotateCcw, Swords, Crown,
-  FlameKindling, Wand2, Crosshair, UserX, Vote
-} from 'lucide-react';
+import { Moon, Sun, Shield, Eye, Skull, ChevronRight, Send, RotateCcw, Swords, Crown, Wand2, Crosshair, Vote, Star } from 'lucide-react';
 import { Player, Role, Phase, GameState, Side, SeerRecord } from './types';
-import { PLAYER_COUNT, ROLE_LABELS, ROLE_ICONS } from './constants';
+import { ROLE_LABELS, ROLE_ICONS } from './constants';
 import { initializePlayers, checkWinner, getSide } from './lib/gameUtils';
 import {
   generateAIDiscussion, generateAIVote, generateAINightAction,
@@ -14,945 +10,678 @@ import {
   generateAIWolfKill
 } from './services/geminiService';
 
-// ─── Theme ────────────────────────────────────────────────────────────────────
-const PHASE_COLORS: Record<string, string> = {
-  NIGHT: '#1a0a2e',
-  DAY: '#2d1a00',
-  VOTE: '#1a0000',
-  SHERIFF: '#0a1a2e',
+// ── Constants ─────────────────────────────────────────────────────────────────
+const RC: Record<Role, string> = {
+  [Role.WEREWOLF]: '#e05252', [Role.SEER]: '#a78bfa', [Role.WITCH]: '#34d399',
+  [Role.HUNTER]: '#fb923c', [Role.GUARD]: '#60a5fa', [Role.IDIOT]: '#fbbf24', [Role.VILLAGER]: '#94a3b8',
+};
+const PHASE_BG: Record<string, string> = {
+  NIGHT: 'linear-gradient(135deg,#0f0c1a 0%,#1a0f2e 100%)',
+  DAY:   'linear-gradient(135deg,#1a1200 0%,#2d1f00 100%)',
+  VOTE:  'linear-gradient(135deg,#1a0000 0%,#2d0a0a 100%)',
+  SHERIFF: 'linear-gradient(135deg,#001020 0%,#0a1a2e 100%)',
+};
+const INITIAL: GameState = {
+  players:[], day:1, phase:Phase.INIT, logs:[],
+  witchStatus:{hasSavePotion:true,hasPoisonPotion:true},
+  seerRecords:[], currentDiscussionIndex:-1, votes:{},
+  voteReasons:{}, lastNightDeaths:[], discussionDirection:1,
+  sheriffCandidates:[], isSheriffElectionCompleted:false,
 };
 
-const ROLE_COLORS: Record<Role, string> = {
-  [Role.WEREWOLF]: '#c0392b',
-  [Role.SEER]: '#8e44ad',
-  [Role.WITCH]: '#16a085',
-  [Role.HUNTER]: '#d35400',
-  [Role.GUARD]: '#2980b9',
-  [Role.IDIOT]: '#f39c12',
-  [Role.VILLAGER]: '#7f8c8d',
-};
-
-const LOG_ICONS: Record<string, React.ReactNode> = {
-  system: <FlameKindling className="w-3.5 h-3.5" />,
-  wolf: <Skull className="w-3.5 h-3.5" />,
-  seer: <Eye className="w-3.5 h-3.5" />,
-  witch: <Wand2 className="w-3.5 h-3.5" />,
-  guard: <Shield className="w-3.5 h-3.5" />,
-  hunter: <Crosshair className="w-3.5 h-3.5" />,
-  idiot: <UserX className="w-3.5 h-3.5" />,
-  discussion: <Send className="w-3.5 h-3.5" />,
-  vote: <Vote className="w-3.5 h-3.5" />,
-};
-
-const INITIAL_STATE: GameState = {
-  players: [], day: 1, phase: Phase.INIT, logs: [],
-  witchStatus: { hasSavePotion: true, hasPoisonPotion: true },
-  seerRecords: [], currentDiscussionIndex: -1, votes: {},
-  voteReasons: {}, lastNightDeaths: [], discussionDirection: 1,
-  sheriffCandidates: [], isSheriffElectionCompleted: false,
-};
-
-// ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [gameState, setGameState] = useState<GameState>(INITIAL_STATE);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [humanSpeechInput, setHumanSpeechInput] = useState('');
+  const [gs, setGs] = useState<GameState>(INITIAL);
+  const [busy, setBusy] = useState(false);
+  const [speech, setSpeech] = useState('');
   const [humanVoted, setHumanVoted] = useState(false);
-  const logEndRef = useRef<HTMLDivElement>(null);
-  const processedIds = useRef<Set<number>>(new Set());
+  const [sheriffElectDone, setSheriffElectDone] = useState(false);
+  const logEnd = useRef<HTMLDivElement>(null);
+  const processed = useRef<Set<number>>(new Set());
 
+  useEffect(() => { logEnd.current?.scrollIntoView({ behavior:'smooth' }); }, [gs.logs]);
+
+  // ── Init ──
   useEffect(() => {
-    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [gameState.logs]);
-
-  // Init
-  useEffect(() => {
-    if (gameState.phase === Phase.INIT) {
-      const players = initializePlayers();
-      const human = players.find(p => p.isHuman)!;
-      setGameState(prev => ({
-        ...prev, players, phase: Phase.NIGHT_GUARD,
-        logs: [{ id: 'init', day: 1, phase: Phase.INIT, type: 'system',
-          message: `🎮 游戏开始！共12人，4狼4民3神1特殊。你的身份已在左侧显示。` }]
-      }));
-    }
-  }, [gameState.phase === Phase.INIT]);
-
-  const addLog = (log: Omit<typeof gameState.logs[0], 'id'>) => {
-    setGameState(prev => ({
-      ...prev,
-      logs: [...prev.logs, { ...log, id: Math.random().toString(36).substr(2, 9) }]
+    if (gs.phase !== Phase.INIT) return;
+    const players = initializePlayers();
+    setGs(prev => ({
+      ...prev, players, phase: Phase.NIGHT_GUARD,
+      logs: [{ id:'init', day:1, phase:Phase.INIT, type:'system',
+        message:'游戏开始！共12人：4狼人 · 4平民 · 预言家 · 女巫 · 猎人 · 特殊神职。闭眼，夜晚降临...' }]
     }));
-  };
+  }, [gs.phase === Phase.INIT]);
 
-  const updatePlayers = (players: Player[]) => {
-    setGameState(prev => ({ ...prev, players }));
-  };
+  const log = (entry: Omit<typeof gs.logs[0],'id'>) =>
+    setGs(p => ({ ...p, logs:[...p.logs,{...entry,id:Math.random().toString(36).slice(2,9)}] }));
 
-  const nextPhase = (stateOverride?: Partial<GameState>) => {
-    setGameState(prev => {
-      const merged = { ...prev, ...stateOverride };
-      const winner = checkWinner(merged.players);
-      if (winner) return { ...merged, phase: Phase.GAME_OVER, winner };
-
-      let next = prev.phase;
-      let nextDay = prev.day;
-      switch (prev.phase) {
-        case Phase.NIGHT_GUARD: next = Phase.NIGHT_WOLVES; break;
-        case Phase.NIGHT_WOLVES: next = Phase.NIGHT_SEER; break;
-        case Phase.NIGHT_SEER: next = Phase.NIGHT_WITCH; break;
-        case Phase.NIGHT_WITCH: next = Phase.NIGHT_RESULT; break;
+  const advance = (override?: Partial<GameState>) => {
+    setGs(prev => {
+      const m = {...prev,...override};
+      const w = checkWinner(m.players);
+      if (w) return {...m, phase:Phase.GAME_OVER, winner:w};
+      let next = prev.phase, day = prev.day;
+      switch(prev.phase) {
+        case Phase.NIGHT_GUARD:   next=Phase.NIGHT_WOLVES; break;
+        case Phase.NIGHT_WOLVES:  next=Phase.NIGHT_SEER; break;
+        case Phase.NIGHT_SEER:    next=Phase.NIGHT_WITCH; break;
+        case Phase.NIGHT_WITCH:   next=Phase.NIGHT_RESULT; break;
         case Phase.NIGHT_RESULT:
-          next = prev.day === 1 && !prev.isSheriffElectionCompleted ? Phase.SHERIFF_ELECT : Phase.DAY_DISCUSSION; break;
-        case Phase.SHERIFF_ELECT: next = Phase.SHERIFF_SPEECH; break;
-        case Phase.SHERIFF_SPEECH: next = Phase.SHERIFF_VOTE; break;
-        case Phase.SHERIFF_VOTE: next = Phase.SHERIFF_RESULT; break;
-        case Phase.SHERIFF_RESULT: next = Phase.DAY_DISCUSSION; break;
-        case Phase.DAY_DISCUSSION: next = Phase.DAY_VOTING; break;
-        case Phase.DAY_VOTING: next = Phase.DAY_RESULT; break;
-        case Phase.DAY_RESULT: next = Phase.NIGHT_GUARD; nextDay++; break;
+          next = prev.day===1 && !prev.isSheriffElectionCompleted ? Phase.SHERIFF_ELECT : Phase.DAY_DISCUSSION; break;
+        case Phase.SHERIFF_ELECT:  next=Phase.SHERIFF_SPEECH; break;
+        case Phase.SHERIFF_SPEECH: next=Phase.SHERIFF_VOTE; break;
+        case Phase.SHERIFF_VOTE:   next=Phase.SHERIFF_RESULT; break;
+        case Phase.SHERIFF_RESULT: next=Phase.DAY_DISCUSSION; break;
+        case Phase.DAY_DISCUSSION: next=Phase.DAY_VOTING; break;
+        case Phase.DAY_VOTING:     next=Phase.DAY_RESULT; break;
+        case Phase.DAY_RESULT:     next=Phase.NIGHT_GUARD; day++; break;
         default: break;
       }
-      return { ...merged, phase: next, day: nextDay };
+      return {...m, phase:next, day};
     });
   };
 
   // ── AI Triggers ──
   useEffect(() => {
-    const { phase, players } = gameState;
-    const humanRole = players.find(p => p.isHuman)?.role;
-
-    if (phase === Phase.NIGHT_GUARD && humanRole !== Role.GUARD) handleAIGuard();
-    else if (phase === Phase.NIGHT_WOLVES && humanRole !== Role.WEREWOLF) handleAIWolves();
-    else if (phase === Phase.NIGHT_SEER && humanRole !== Role.SEER) handleAISeer();
-    else if (phase === Phase.NIGHT_WITCH && humanRole !== Role.WITCH) handleAIWitch();
-    else if (phase === Phase.NIGHT_RESULT) handleNightSettlement();
-    else if (phase === Phase.SHERIFF_ELECT) handleAISheriffElect();
-    else if (phase === Phase.SHERIFF_SPEECH) handleAISheriffSpeech();
-    else if (phase === Phase.SHERIFF_VOTE) handleAISheriffVotePhase();
-    else if (phase === Phase.SHERIFF_ACTION) handleAISheriffActionPhase();
-  }, [gameState.phase]);
+    const hr = gs.players.find(p=>p.isHuman)?.role;
+    if (gs.phase===Phase.NIGHT_GUARD && hr!==Role.GUARD) aiGuard();
+    else if (gs.phase===Phase.NIGHT_WOLVES && hr!==Role.WEREWOLF) aiWolves();
+    else if (gs.phase===Phase.NIGHT_SEER && hr!==Role.SEER) aiSeer();
+    else if (gs.phase===Phase.NIGHT_WITCH && hr!==Role.WITCH) aiWitch();
+    else if (gs.phase===Phase.NIGHT_RESULT) nightSettle();
+    else if (gs.phase===Phase.SHERIFF_ELECT) { setSheriffElectDone(false); aiSheriffElect(); }
+    else if (gs.phase===Phase.SHERIFF_SPEECH) aiSheriffSpeech();
+    else if (gs.phase===Phase.SHERIFF_VOTE) aiSheriffVote();
+    else if (gs.phase===Phase.SHERIFF_ACTION) aiSheriffHandoff();
+  }, [gs.phase]);
 
   useEffect(() => {
-    if (gameState.phase !== Phase.DAY_DISCUSSION && gameState.phase !== Phase.SHERIFF_SPEECH) {
-      processedIds.current.clear();
-    }
-  }, [gameState.phase]);
+    if (gs.phase!==Phase.DAY_DISCUSSION && gs.phase!==Phase.SHERIFF_SPEECH) processed.current.clear();
+  }, [gs.phase]);
 
-  // ── Night Handlers ──
-  const handleAIGuard = async () => {
-    setIsProcessing(true);
-    const guard = gameState.players.find(p => p.role === Role.GUARD && p.isAlive && !p.isHuman);
-    if (guard) {
-      const targetId = await generateAIGuardAction(guard, gameState);
-      setGameState(prev => ({ ...prev, guardTargetId: targetId ?? undefined }));
-    }
-    setIsProcessing(false);
-    nextPhase();
+  // ── Night ──
+  const aiGuard = async () => {
+    setBusy(true);
+    const g = gs.players.find(p=>p.role===Role.GUARD&&p.isAlive&&!p.isHuman);
+    if (g) { const t=await generateAIGuardAction(g,gs); setGs(p=>({...p,guardTargetId:t??undefined})); }
+    setBusy(false); advance();
   };
-
-  const handleAIWolves = async () => {
-    setIsProcessing(true);
-    const wolf = gameState.players.find(p => p.role === Role.WEREWOLF && p.isAlive && !p.isHuman);
-    if (wolf) {
-      const targetId = await generateAINightAction(wolf, gameState, 'KILL') as number;
-      setGameState(prev => ({ ...prev, nightKilledId: targetId }));
-    }
-    setIsProcessing(false);
-    nextPhase();
+  const aiWolves = async () => {
+    setBusy(true);
+    const w = gs.players.find(p=>p.role===Role.WEREWOLF&&p.isAlive&&!p.isHuman);
+    if (w) { const t=await generateAINightAction(w,gs,'KILL') as number; setGs(p=>({...p,nightKilledId:t})); }
+    setBusy(false); advance();
   };
-
-  const handleAISeer = async () => {
-    setIsProcessing(true);
-    const seer = gameState.players.find(p => p.role === Role.SEER && p.isAlive && !p.isHuman);
-    if (seer) {
-      const targetId = await generateAINightAction(seer, gameState, 'CHECK') as number;
-      if (targetId && targetId !== -1) {
-        const target = gameState.players.find(p => p.id === targetId)!;
-        const record: SeerRecord = { targetId, role: target.role, side: getSide(target.role) };
-        setGameState(prev => ({ ...prev, seerRecords: [...prev.seerRecords, record] }));
+  const aiSeer = async () => {
+    setBusy(true);
+    const s = gs.players.find(p=>p.role===Role.SEER&&p.isAlive&&!p.isHuman);
+    if (s) {
+      const t=await generateAINightAction(s,gs,'CHECK') as number;
+      if (t&&t!==-1) {
+        const tgt=gs.players.find(p=>p.id===t)!;
+        setGs(p=>({...p,seerRecords:[...p.seerRecords,{targetId:t,role:tgt.role,side:getSide(tgt.role)}]}));
       }
     }
-    setIsProcessing(false);
-    nextPhase();
+    setBusy(false); advance();
   };
-
-  const handleAIWitch = async () => {
-    setIsProcessing(true);
-    const witch = gameState.players.find(p => p.role === Role.WITCH && p.isAlive && !p.isHuman);
-    if (witch) {
-      const result = await generateAINightAction(witch, gameState, 'WITCH_ACTION') as { action: string; targetId?: number };
-      if (result?.action === 'save') {
-        setGameState(prev => ({ ...prev, witchSavedId: prev.nightKilledId, witchStatus: { ...prev.witchStatus, hasSavePotion: false } }));
-      } else if (result?.action === 'poison' && result.targetId) {
-        setGameState(prev => ({ ...prev, witchPoisonedId: result.targetId, witchStatus: { ...prev.witchStatus, hasPoisonPotion: false } }));
-      }
+  const aiWitch = async () => {
+    setBusy(true);
+    const w=gs.players.find(p=>p.role===Role.WITCH&&p.isAlive&&!p.isHuman);
+    if (w) {
+      const r=await generateAINightAction(w,gs,'WITCH_ACTION') as {action:string;targetId?:number};
+      if (r?.action==='save') setGs(p=>({...p,witchSavedId:p.nightKilledId,witchStatus:{...p.witchStatus,hasSavePotion:false}}));
+      else if (r?.action==='poison'&&r.targetId) setGs(p=>({...p,witchPoisonedId:r.targetId,witchStatus:{...p.witchStatus,hasPoisonPotion:false}}));
     }
-    setIsProcessing(false);
-    nextPhase();
+    setBusy(false); advance();
   };
-
-  const handleNightSettlement = async () => {
-    let players = [...gameState.players];
-    const { nightKilledId, witchSavedId, witchPoisonedId, guardTargetId } = gameState;
-    const deaths: string[] = [];
-    let hunterMustShoot = false;
-    const nightDeathIds: number[] = [];
-
-    const milkPenetrated = nightKilledId && guardTargetId === nightKilledId && witchSavedId === nightKilledId;
-
-    const toKill: (number | undefined)[] = [];
-    if (milkPenetrated) {
-      toKill.push(nightKilledId);
-    } else if (nightKilledId) {
-      const protected_ = guardTargetId === nightKilledId || witchSavedId === nightKilledId;
-      if (!protected_) toKill.push(nightKilledId);
-    }
+  const nightSettle = async () => {
+    let players=[...gs.players];
+    const {nightKilledId,witchSavedId,witchPoisonedId,guardTargetId}=gs;
+    const deaths:string[]=[]; let hunter=false; const ids:number[]=[];
+    const milk=nightKilledId&&guardTargetId===nightKilledId&&witchSavedId===nightKilledId;
+    const toKill:number[]=[];
+    if (milk&&nightKilledId) toKill.push(nightKilledId);
+    else if (nightKilledId&&guardTargetId!==nightKilledId&&witchSavedId!==nightKilledId) toKill.push(nightKilledId);
     if (witchPoisonedId) toKill.push(witchPoisonedId);
-
     for (const id of toKill) {
-      if (!id) continue;
-      const p = players.find(pl => pl.id === id);
-      if (p && p.isAlive) {
-        p.isAlive = false;
-        p.deathDay = gameState.day;
-        p.deathReason = id === witchPoisonedId ? '女巫毒杀' : '狼人猎杀';
-        deaths.push(`${id}号(${ROLE_LABELS[p.role]})`);
-        nightDeathIds.push(id);
-
-        if (p.role === Role.HUNTER) {
-          if (p.isHuman) {
-            hunterMustShoot = true;
-          } else {
-            setIsProcessing(true);
-            const targetId = await generateAINightAction(p, { ...gameState, players }, 'HUNTER_SHOOT') as number;
-            if (targetId && targetId !== -1) {
-              const shot = players.find(pl => pl.id === targetId);
-              if (shot?.isAlive) {
-                shot.isAlive = false; shot.deathDay = gameState.day; shot.deathReason = '猎人带走';
-                deaths.push(`${targetId}号(${ROLE_LABELS[shot.role]})[猎人带走]`);
-              }
-            }
-            setIsProcessing(false);
-          }
+      const p=players.find(pl=>pl.id===id);
+      if (!p||!p.isAlive) continue;
+      p.isAlive=false; p.deathDay=gs.day; p.deathReason=id===witchPoisonedId?'女巫毒杀':'狼人猎杀';
+      deaths.push(`${id}号(${ROLE_LABELS[p.role]})`); ids.push(id);
+      if (p.role===Role.HUNTER) {
+        if (p.isHuman) { hunter=true; }
+        else {
+          setBusy(true);
+          const t=await generateAINightAction(p,{...gs,players},'HUNTER_SHOOT') as number;
+          if (t&&t!==-1) { const s=players.find(pl=>pl.id===t); if(s?.isAlive){s.isAlive=false;s.deathDay=gs.day;s.deathReason='猎人带走';deaths.push(`${t}号[猎人带走]`);} }
+          setBusy(false);
         }
       }
     }
+    log({day:gs.day,phase:Phase.NIGHT_RESULT,type:'system',message:deaths.length>0?`昨夜出局：${deaths.join('、')}`:'昨夜平安，无人出局。'});
+    const deadSheriff=gs.sheriffId&&!players.find(p=>p.id===gs.sheriffId&&p.isAlive);
+    setGs(p=>({...p,players,nightKilledId:undefined,witchSavedId:undefined,witchPoisonedId:undefined,lastGuardTargetId:p.guardTargetId,guardTargetId:undefined,hunterMustShoot:hunter,sheriffMustAct:!!deadSheriff,lastNightDeaths:ids}));
+    if (deadSheriff) setGs(p=>({...p,phase:Phase.SHERIFF_ACTION}));
+    else if (!hunter) advance();
+  };
 
-    const msg = deaths.length > 0 ? `昨夜出局：${deaths.join('、')}` : '昨夜是平安夜，无人出局。';
-    addLog({ day: gameState.day, phase: Phase.NIGHT_RESULT, message: msg, type: 'system' });
-
-    const deadSheriff = gameState.sheriffId && !players.find(p => p.id === gameState.sheriffId && p.isAlive);
-
-    setGameState(prev => ({
-      ...prev, players,
-      nightKilledId: undefined, witchSavedId: undefined, witchPoisonedId: undefined,
-      lastGuardTargetId: prev.guardTargetId, guardTargetId: undefined,
-      hunterMustShoot, sheriffMustAct: !!deadSheriff, lastNightDeaths: nightDeathIds,
-    }));
-
-    if (deadSheriff) {
-      setGameState(prev => ({ ...prev, phase: Phase.SHERIFF_ACTION }));
-    } else if (!hunterMustShoot) {
-      nextPhase();
+  // ── Sheriff ──
+  const aiSheriffElect = async () => {
+    // AI picks candidates — then STOPS and waits for human to click
+    setBusy(true);
+    const cands:number[]=[];
+    for (const p of gs.players.filter(pl=>!pl.isHuman&&pl.isAlive)) {
+      const run=await generateAISheriffChoice(p,{...gs,sheriffCandidates:cands});
+      if (run) cands.push(p.id);
     }
+    setBusy(false);
+    // Only update candidates, do NOT call advance() — wait for human button
+    setGs(p=>({...p,sheriffCandidates:cands}));
+    setSheriffElectDone(true);
   };
-
-  // ── Sheriff Handlers ──
-  const handleAISheriffElect = async () => {
-    setIsProcessing(true);
-    const candidates: number[] = [];
-    for (const p of gameState.players.filter(pl => !pl.isHuman && pl.isAlive)) {
-      const runs = await generateAISheriffChoice(p, gameState);
-      if (runs) candidates.push(p.id);
+  const aiSheriffSpeech = () => {
+    if (gs.sheriffCandidates.length===0){advance();return;}
+    setGs(p=>({...p,currentDiscussionIndex:p.sheriffCandidates[0]}));
+  };
+  const aiSheriffVote = async () => {
+    setBusy(true);
+    const voters=gs.players.filter(p=>p.isAlive&&!gs.sheriffCandidates.includes(p.id)&&!p.isHuman);
+    const votes={...gs.votes}, reasons={...gs.voteReasons};
+    for (const v of voters) {
+      const r=await generateAIVote(v,gs,gs.sheriffCandidates);
+      if (r.voteId){votes[v.id]=r.voteId;reasons[v.id]=r.reason;}
     }
-    setIsProcessing(false);
-    setGameState(prev => ({ ...prev, sheriffCandidates: candidates }));
+    setBusy(false);
+    const humanIsVoter=gs.players.find(p=>p.isHuman&&p.isAlive&&!gs.sheriffCandidates.includes(1));
+    if (!humanIsVoter) finalizeSheriff(votes,reasons);
+    else setGs(p=>({...p,votes,voteReasons:reasons}));
+  };
+  const finalizeSheriff=(votes:Record<number,number>,reasons:Record<number,string>)=>{
+    const counts:Record<number,number>={};
+    Object.values(votes).forEach(id=>counts[id]=(counts[id]||0)+1);
+    let mx=0,win:number[]=[];
+    Object.entries(counts).forEach(([id,c])=>{if(c>mx){mx=c;win=[+id];}else if(c===mx)win.push(+id);});
+    const eid=win.length===1?win[0]:null;
+    log({day:gs.day,phase:Phase.SHERIFF_RESULT,type:'system',message:eid?`🏅 ${eid}号当选警长！`:'平票，本局无警长。'});
+    setGs(p=>({...p,sheriffId:eid??undefined,isSheriffElectionCompleted:true,votes,voteReasons:reasons}));
+    advance();
+  };
+  const aiSheriffHandoff=async()=>{
+    const s=gs.players.find(p=>p.id===gs.sheriffId);
+    if (!s||s.isHuman) return;
+    setBusy(true);
+    const t=await generateAISheriffAction(s,gs) as number|null;
+    doHandoff(t); setBusy(false);
+  };
+  const doHandoff=(t:number|null)=>{
+    if (t){log({day:gs.day,phase:Phase.SHERIFF_ACTION,type:'system',message:`🏅 警长将警徽传给${t}号。`});setGs(p=>({...p,sheriffId:t,sheriffMustAct:false}));}
+    else{log({day:gs.day,phase:Phase.SHERIFF_ACTION,type:'system',message:'警长撕毁了警徽。'});setGs(p=>({...p,sheriffId:undefined,sheriffMustAct:false}));}
+    if (!gs.hunterMustShoot) advance();
   };
 
-  const handleAISheriffSpeech = () => {
-    if (gameState.sheriffCandidates.length === 0) { nextPhase(); return; }
-    setGameState(prev => ({ ...prev, currentDiscussionIndex: prev.sheriffCandidates[0] }));
-  };
-
-  const handleAISheriffVotePhase = async () => {
-    setIsProcessing(true);
-    const voters = gameState.players.filter(p => p.isAlive && !gameState.sheriffCandidates.includes(p.id) && !p.isHuman);
-    const votes: Record<number, number> = { ...gameState.votes };
-    const voteReasons: Record<number, string> = { ...gameState.voteReasons };
-    for (const voter of voters) {
-      const result = await generateAIVote(voter, gameState, gameState.sheriffCandidates);
-      if (result.voteId) { votes[voter.id] = result.voteId; voteReasons[voter.id] = result.reason; }
-    }
-    setIsProcessing(false);
-    // Check if human is a voter; if not, finalize immediately
-    const humanIsVoter = gameState.players.find(p => p.isHuman && p.isAlive && !gameState.sheriffCandidates.includes(1));
-    if (!humanIsVoter) finalizeSheriffVote(votes, voteReasons);
-    else setGameState(prev => ({ ...prev, votes, voteReasons }));
-  };
-
-  const finalizeSheriffVote = (votes: Record<number, number>, voteReasons: Record<number, string>) => {
-    const counts: Record<number, number> = {};
-    Object.values(votes).forEach(id => counts[id] = (counts[id] || 0) + 1);
-    let max = 0; let winners: number[] = [];
-    Object.entries(counts).forEach(([id, c]) => {
-      if (c > max) { max = c; winners = [+id]; } else if (c === max) winners.push(+id);
-    });
-    const electedId = winners.length === 1 ? winners[0] : null;
-    addLog({ day: gameState.day, phase: Phase.SHERIFF_RESULT, type: 'system',
-      message: electedId ? `🏅 ${electedId}号玩家当选警长！` : '平票，本局无警长。' });
-    setGameState(prev => ({ ...prev, sheriffId: electedId ?? undefined, isSheriffElectionCompleted: true, votes, voteReasons }));
-    nextPhase();
-  };
-
-  const handleAISheriffActionPhase = async () => {
-    const sheriff = gameState.players.find(p => p.id === gameState.sheriffId);
-    if (!sheriff || sheriff.isHuman) return;
-    setIsProcessing(true);
-    const targetId = await generateAISheriffAction(sheriff, gameState) as number | null;
-    applySheriffHandoff(targetId);
-    setIsProcessing(false);
-  };
-
-  const applySheriffHandoff = (targetId: number | null) => {
-    if (targetId) {
-      addLog({ day: gameState.day, phase: Phase.SHERIFF_ACTION, type: 'system', message: `🏅 警长将警徽传给${targetId}号。` });
-      setGameState(prev => ({ ...prev, sheriffId: targetId, sheriffMustAct: false }));
-    } else {
-      addLog({ day: gameState.day, phase: Phase.SHERIFF_ACTION, type: 'system', message: `💥 警长撕毁了警徽，本局不再有警长。` });
-      setGameState(prev => ({ ...prev, sheriffId: undefined, sheriffMustAct: false }));
-    }
-    if (!gameState.hunterMustShoot) nextPhase();
-  };
-
-  // ── Discussion (sequential) ──
-  useEffect(() => {
-    const { phase, currentDiscussionIndex, players } = gameState;
-    if (phase !== Phase.DAY_DISCUSSION && phase !== Phase.SHERIFF_SPEECH) return;
-    if (currentDiscussionIndex < 0 || isProcessing) return;
-
-    const isSheriff = phase === Phase.SHERIFF_SPEECH;
-    const participants = isSheriff
-      ? gameState.sheriffCandidates
-      : players.filter(p => p.isAlive).map(p => p.id).sort((a, b) => a - b);
-
-    if (!isSheriff && processedIds.current.size >= participants.length) {
-      setTimeout(() => { setGameState(prev => ({ ...prev, currentDiscussionIndex: -1 })); nextPhase(); }, 800);
-      return;
-    }
-
-    const player = players.find(p => p.id === currentDiscussionIndex);
-    if (!player || processedIds.current.has(currentDiscussionIndex)) {
-      advanceDiscussion(participants, currentDiscussionIndex, isSheriff);
-      return;
-    }
+  // ── Discussion ──
+  useEffect(()=>{
+    const {phase,currentDiscussionIndex:ci,players}=gs;
+    if (phase!==Phase.DAY_DISCUSSION&&phase!==Phase.SHERIFF_SPEECH) return;
+    if (ci<0||busy) return;
+    const isSheriff=phase===Phase.SHERIFF_SPEECH;
+    const parts=isSheriff?gs.sheriffCandidates:players.filter(p=>p.isAlive).map(p=>p.id).sort((a,b)=>a-b);
+    if (!isSheriff&&processed.current.size>=parts.length){setTimeout(()=>{setGs(p=>({...p,currentDiscussionIndex:-1}));advance();},600);return;}
+    const player=players.find(p=>p.id===ci);
+    if (!player||processed.current.has(ci)){moveNext(parts,ci,isSheriff);return;}
     if (player.isHuman) return;
-
-    const runSpeech = async () => {
-      setIsProcessing(true);
-      try {
-        const speech = await generateAIDiscussion(player, gameState);
-        addLog({ day: gameState.day, phase, type: 'discussion', playerName: `${player.id}号`, message: speech });
-        processedIds.current.add(player.id);
-        setTimeout(() => advanceDiscussion(participants, currentDiscussionIndex, isSheriff), 1200);
-      } catch (e) {
-        processedIds.current.add(player.id);
-        advanceDiscussion(participants, currentDiscussionIndex, isSheriff);
-      } finally {
-        setIsProcessing(false);
-      }
+    const run=async()=>{
+      setBusy(true);
+      try{
+        const s=await generateAIDiscussion(player,gs);
+        log({day:gs.day,phase,type:'discussion',playerName:`${player.id}号`,message:s});
+        processed.current.add(player.id);
+        setTimeout(()=>moveNext(parts,ci,isSheriff),1000);
+      }catch{processed.current.add(player.id);moveNext(parts,ci,isSheriff);}
+      finally{setBusy(false);}
     };
-    runSpeech();
-  }, [gameState.phase, gameState.currentDiscussionIndex, isProcessing]);
+    run();
+  },[gs.phase,gs.currentDiscussionIndex,busy]);
 
-  const advanceDiscussion = (participants: number[], current: number, isSheriff: boolean) => {
-    const pos = participants.indexOf(current);
-    if (pos === -1 || pos >= participants.length - 1) {
-      setGameState(prev => ({ ...prev, currentDiscussionIndex: -1 }));
-      if (isSheriff) nextPhase();
+  const moveNext=(parts:number[],cur:number,isSheriff:boolean)=>{
+    const pos=parts.indexOf(cur);
+    if (pos===-1||pos>=parts.length-1){
+      setGs(p=>({...p,currentDiscussionIndex:-1}));
+      if (isSheriff) advance();
       return;
     }
-    const dir = gameState.discussionDirection;
-    let next = isSheriff ? participants[pos + 1] : participants[(pos + dir + participants.length) % participants.length];
-    setGameState(prev => ({ ...prev, currentDiscussionIndex: next }));
+    const dir=gs.discussionDirection;
+    const next=isSheriff?parts[pos+1]:parts[(pos+dir+parts.length)%parts.length];
+    setGs(p=>({...p,currentDiscussionIndex:next}));
+  };
+  const startDiscussion=(dir:1|-1=1)=>{
+    const alive=gs.players.filter(p=>p.isAlive).map(p=>p.id).sort((a,b)=>a-b);
+    let start=alive[0];
+    if (gs.lastNightDeaths.length>0){const ld=gs.lastNightDeaths[gs.lastNightDeaths.length-1];const af=alive.filter(id=>id>ld);start=af.length>0?af[0]:alive[0];}
+    if (gs.sheriffId) log({day:gs.day,phase:Phase.DAY_DISCUSSION,type:'system',message:`警长决定${dir===1?'顺时针':'逆时针'}发言，从${start}号开始。`});
+    setGs(p=>({...p,currentDiscussionIndex:start,discussionDirection:dir}));
+  };
+  const submitSpeech=()=>{
+    const s=speech.trim()||'（过）';
+    const isSheriff=gs.phase===Phase.SHERIFF_SPEECH;
+    log({day:gs.day,phase:gs.phase,type:'discussion',playerName:'你',message:s});
+    setSpeech('');
+    processed.current.add(1);
+    const parts=isSheriff?gs.sheriffCandidates:gs.players.filter(p=>p.isAlive).map(p=>p.id).sort((a,b)=>a-b);
+    moveNext(parts,1,isSheriff);
   };
 
-  const startDiscussion = (direction: 1 | -1 = 1) => {
-    const alive = gameState.players.filter(p => p.isAlive).map(p => p.id).sort((a, b) => a - b);
-    if (alive.length === 0) return;
-    let startId = alive[0];
-    if (gameState.lastNightDeaths.length > 0) {
-      const lastDead = gameState.lastNightDeaths[gameState.lastNightDeaths.length - 1];
-      const after = alive.filter(id => id > lastDead);
-      startId = after.length > 0 ? after[0] : alive[0];
+  // ── Day Vote ──
+  const humanVote=async(tid:number|null)=>{
+    setBusy(true); setHumanVoted(true);
+    const votes:Record<number,number>={}, reasons:Record<number,string>={};
+    if (tid){votes[1]=tid;reasons[1]='你的投票。';}
+    for (const ai of gs.players.filter(p=>p.isAlive&&!p.isHuman&&gs.idiotRevealedId!==p.id)){
+      const r=await generateAIVote(ai,gs);
+      if (r.voteId){votes[ai.id]=r.voteId;reasons[ai.id]=r.reason;log({day:gs.day,phase:Phase.DAY_VOTING,type:'vote',playerName:`${ai.id}号`,message:`投${r.voteId}号。${r.reason}`});}
+      else log({day:gs.day,phase:Phase.DAY_VOTING,type:'vote',playerName:`${ai.id}号`,message:`弃权。${r.reason}`});
     }
-    if (gameState.sheriffId) {
-      addLog({ day: gameState.day, phase: Phase.DAY_DISCUSSION, type: 'system',
-        message: `🏅 警长决定${direction === 1 ? '顺时针' : '逆时针'}发言，从${startId}号开始。` });
-    }
-    setGameState(prev => ({ ...prev, currentDiscussionIndex: startId, discussionDirection: direction }));
-  };
-
-  const submitHumanSpeech = () => {
-    const speech = humanSpeechInput.trim() || '（过）';
-    const isSheriff = gameState.phase === Phase.SHERIFF_SPEECH;
-    addLog({ day: gameState.day, phase: gameState.phase, type: 'discussion', playerName: '你', message: speech });
-    setHumanSpeechInput('');
-    processedIds.current.add(1);
-
-    const participants = isSheriff
-      ? gameState.sheriffCandidates
-      : gameState.players.filter(p => p.isAlive).map(p => p.id).sort((a, b) => a - b);
-    advanceDiscussion(participants, 1, isSheriff);
-  };
-
-  // ── Day Vote (wait for human first) ──
-  const handleHumanVote = async (targetId: number | null) => {
-    setIsProcessing(true);
-    setHumanVoted(true);
-    const votes: Record<number, number> = {};
-    const voteReasons: Record<number, string> = {};
-    if (targetId) { votes[1] = targetId; voteReasons[1] = '你的投票。'; }
-
-    const aliveAI = gameState.players.filter(p => p.isAlive && !p.isHuman);
-    for (const ai of aliveAI) {
-      if (gameState.idiotRevealedId === ai.id) continue;
-      const result = await generateAIVote(ai, gameState);
-      if (result.voteId) {
-        votes[ai.id] = result.voteId;
-        voteReasons[ai.id] = result.reason;
-        addLog({ day: gameState.day, phase: Phase.DAY_VOTING, type: 'vote',
-          playerName: `${ai.id}号`, message: `投票给${result.voteId}号。${result.reason}` });
+    const counts:Record<number,number>={};
+    Object.entries(votes).forEach(([vid,t])=>{const w=+vid===gs.sheriffId?1.5:1;counts[t]=(counts[t]||0)+w;});
+    let mx=0,top:number[]=[];
+    Object.entries(counts).forEach(([id,c])=>{if(c>mx){mx=c;top=[+id];}else if(c===mx)top.push(+id);});
+    const exid=top.length>0?top[Math.floor(Math.random()*top.length)]:null;
+    let players=[...gs.players]; let deadSheriff=false; let idiotRev=gs.idiotRevealedId;
+    if (exid){
+      const p=players.find(pl=>pl.id===exid)!;
+      if (p.role===Role.IDIOT&&!gs.idiotRevealedId){
+        idiotRev=exid;
+        log({day:gs.day,phase:Phase.DAY_RESULT,type:'idiot',message:`🃏 ${exid}号翻牌！是白痴，免疫本次放逐，失去投票权！`});
       } else {
-        addLog({ day: gameState.day, phase: Phase.DAY_VOTING, type: 'vote',
-          playerName: `${ai.id}号`, message: `弃权。${result.reason}` });
-      }
-    }
-
-    // Tally (sheriff gets 1.5 votes)
-    const counts: Record<number, number> = {};
-    Object.entries(votes).forEach(([voterId, vid]) => {
-      const w = +voterId === gameState.sheriffId ? 1.5 : 1;
-      counts[vid] = (counts[vid] || 0) + w;
-    });
-    let max = 0; let top: number[] = [];
-    Object.entries(counts).forEach(([id, c]) => { if (c > max) { max = c; top = [+id]; } else if (c === max) top.push(+id); });
-    const exiledId = top.length > 0 ? top[Math.floor(Math.random() * top.length)] : null;
-
-    let players = [...gameState.players];
-    let deadSheriff = false;
-    let idiotRevealedId = gameState.idiotRevealedId;
-
-    if (exiledId) {
-      const p = players.find(pl => pl.id === exiledId)!;
-      if (p.role === Role.IDIOT && !gameState.idiotRevealedId) {
-        idiotRevealedId = exiledId;
-        addLog({ day: gameState.day, phase: Phase.DAY_RESULT, type: 'idiot',
-          message: `🃏 ${exiledId}号翻牌！ta是白痴，免疫本次放逐，但失去投票权！` });
-      } else {
-        p.isAlive = false; p.deathDay = gameState.day; p.deathReason = '投票放逐';
-        addLog({ day: gameState.day, phase: Phase.DAY_RESULT, type: 'system',
-          message: `⚖️ ${exiledId}号被放逐（得票${max}票），身份：${ROLE_LABELS[p.role]}` });
-        if (exiledId === gameState.sheriffId) deadSheriff = true;
-
-        // Hunter shot at exile
-        if (p.role === Role.HUNTER && !p.isHuman) {
-          const targetId = await generateAINightAction(p, { ...gameState, players }, 'HUNTER_SHOOT') as number;
-          if (targetId) {
-            const shot = players.find(pl => pl.id === targetId);
-            if (shot?.isAlive) {
-              shot.isAlive = false; shot.deathDay = gameState.day; shot.deathReason = '猎人带走';
-              addLog({ day: gameState.day, phase: Phase.DAY_RESULT, type: 'hunter',
-                message: `🏹 猎人${exiledId}号开枪带走${targetId}号！` });
-            }
-          }
+        p.isAlive=false;p.deathDay=gs.day;p.deathReason='投票放逐';
+        log({day:gs.day,phase:Phase.DAY_RESULT,type:'system',message:`⚖️ ${exid}号被放逐（得票${mx}），身份：${ROLE_LABELS[p.role]}`});
+        if (exid===gs.sheriffId) deadSheriff=true;
+        if (p.role===Role.HUNTER&&!p.isHuman){
+          const t=await generateAINightAction(p,{...gs,players},'HUNTER_SHOOT') as number;
+          if (t){const s=players.find(pl=>pl.id===t);if(s?.isAlive){s.isAlive=false;s.deathDay=gs.day;s.deathReason='猎人带走';log({day:gs.day,phase:Phase.DAY_RESULT,type:'system',message:`🏹 猎人${exid}号开枪带走${t}号！`});}}
         }
       }
-    } else {
-      addLog({ day: gameState.day, phase: Phase.DAY_RESULT, type: 'system', message: '无人被放逐（平票）。' });
+    } else log({day:gs.day,phase:Phase.DAY_RESULT,type:'system',message:'无人被放逐（平票）。'});
+    setBusy(false); setHumanVoted(false);
+    setGs(p=>({...p,players,votes,voteReasons:reasons,idiotRevealedId:idiotRev,sheriffMustAct:deadSheriff}));
+    if (deadSheriff) setGs(p=>({...p,phase:Phase.SHERIFF_ACTION}));
+    else advance({players});
+  };
+
+  // ── Human Night ──
+  const hGuard=(t:number|null)=>{setGs(p=>({...p,guardTargetId:t??undefined}));log({day:gs.day,phase:Phase.NIGHT_GUARD,type:'guard',message:t?`你守护了${t}号。`:'你选择空守。'});advance();};
+  const hKillVote=async(myVote:number)=>{
+    setBusy(true);
+    const votes:Record<number,number>={1:myVote};
+    for (const w of gs.players.filter(p=>p.role===Role.WEREWOLF&&p.isAlive&&!p.isHuman)){
+      const t=await generateAIWolfKill(w,gs) as number|null;
+      if (t) votes[w.id]=t;
     }
-
-    setIsProcessing(false);
-    setHumanVoted(false);
-    setGameState(prev => ({ ...prev, players, votes, voteReasons, idiotRevealedId, sheriffMustAct: deadSheriff }));
-    if (deadSheriff) setGameState(prev => ({ ...prev, phase: Phase.SHERIFF_ACTION }));
-    else nextPhase({ players });
+    const counts:Record<number,number>={};
+    Object.values(votes).forEach(id=>counts[id]=(counts[id]||0)+1);
+    const final=+Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0];
+    log({day:gs.day,phase:Phase.NIGHT_WOLVES,type:'wolf',message:`[狼队] ${Object.entries(votes).map(([w,t])=>`${w}号→${t}号`).join(' ')} | 最终击杀：${final}号`});
+    setGs(p=>({...p,nightKilledId:final}));
+    setBusy(false); advance();
+  };
+  const hCheck=(id:number)=>{
+    const t=gs.players.find(p=>p.id===id)!;
+    const side=getSide(t.role);
+    setGs(p=>({...p,seerRecords:[...p.seerRecords,{targetId:id,role:t.role,side}]}));
+    log({day:gs.day,phase:Phase.NIGHT_SEER,type:'seer',message:`查验${id}号：${side===Side.GOOD?'✅ 好人':'❌ 狼人'}`});
+    advance();
+  };
+  const hWitch=(action:'save'|'poison'|'skip',id?:number)=>{
+    if (action==='save'){setGs(p=>({...p,witchSavedId:p.nightKilledId,witchStatus:{...p.witchStatus,hasSavePotion:false}}));log({day:gs.day,phase:Phase.NIGHT_WITCH,type:'witch',message:'你使用了解药。'});}
+    else if (action==='poison'&&id){setGs(p=>({...p,witchPoisonedId:id,witchStatus:{...p.witchStatus,hasPoisonPotion:false}}));log({day:gs.day,phase:Phase.NIGHT_WITCH,type:'witch',message:`你毒杀了${id}号。`});}
+    else log({day:gs.day,phase:Phase.NIGHT_WITCH,type:'witch',message:'你没有使用任何药。'});
+    advance();
+  };
+  const hHunter=(id:number|null)=>{
+    if (id){const p=[...gs.players];const s=p.find(pl=>pl.id===id)!;s.isAlive=false;s.deathDay=gs.day;s.deathReason='猎人带走';log({day:gs.day,phase:Phase.NIGHT_RESULT,type:'system',message:`🏹 你开枪带走了${id}号（${ROLE_LABELS[s.role]}）`});setGs(p2=>({...p2,players:p,hunterMustShoot:false}));}
+    else setGs(p=>({...p,hunterMustShoot:false}));
+    advance();
+  };
+  const hSheriffElect=(run:boolean)=>{
+    const cands=run?[...gs.sheriffCandidates,1].sort((a,b)=>a-b):gs.sheriffCandidates;
+    setGs(p=>({...p,sheriffCandidates:cands}));
+    log({day:gs.day,phase:Phase.SHERIFF_ELECT,type:'system',message:`竞选名单确定：${cands.length>0?cands.map(id=>`${id}号`).join('、'):'无人上警（将跳过竞选）'}`});
+    advance();
   };
 
-  // ── Human Night Actions ──
-  const humanGuardAction = (targetId: number | null) => {
-    setGameState(prev => ({ ...prev, guardTargetId: targetId ?? undefined }));
-    addLog({ day: gameState.day, phase: Phase.NIGHT_GUARD, type: 'guard',
-      message: targetId ? `你守护了${targetId}号。` : '你选择空守。' });
-    nextPhase();
-  };
-  const humanKillVote = async (myVote: number) => {
-    setIsProcessing(true);
-    const votes: Record<number, number> = { 1: myVote };
-    const aiWolves = gameState.players.filter(
-      p => p.role === Role.WEREWOLF && p.isAlive && !p.isHuman
-    );
-    for (const wolf of aiWolves) {
-      const targetId = await generateAIWolfKill(wolf, gameState) as number | null;
-      if (targetId) votes[wolf.id] = targetId;
-    }
-    // 取票数最多的目标
-    const counts: Record<number, number> = {};
-    Object.values(votes).forEach(id => counts[id] = (counts[id] || 0) + 1);
-    const finalTarget = +Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
-    const voteLog = Object.entries(votes).map(([w, t]) => `${w}号投${t}号`).join('、');
-    addLog({ day: gameState.day, phase: Phase.NIGHT_WOLVES, type: 'wolf',
-      message: `[狼队内部] 投票：${voteLog} → 最终击杀${finalTarget}号。` });
-    setGameState(prev => ({ ...prev, nightKilledId: finalTarget }));
-    setIsProcessing(false);
-    nextPhase();
-  };
-  const humanCheck = (id: number) => {
-    const target = gameState.players.find(p => p.id === id)!;
-    const side = getSide(target.role);
-    setGameState(prev => ({ ...prev, seerRecords: [...prev.seerRecords, { targetId: id, role: target.role, side }] }));
-    addLog({ day: gameState.day, phase: Phase.NIGHT_SEER, type: 'seer',
-      message: `查验${id}号：${side === Side.GOOD ? '✅ 好人' : '❌ 狼人'}` });
-    nextPhase();
-  };
-  const humanWitch = (action: 'save' | 'poison' | 'skip', id?: number) => {
-    if (action === 'save') {
-      setGameState(prev => ({ ...prev, witchSavedId: prev.nightKilledId, witchStatus: { ...prev.witchStatus, hasSavePotion: false } }));
-      addLog({ day: gameState.day, phase: Phase.NIGHT_WITCH, type: 'witch', message: `你使用了解药。` });
-    } else if (action === 'poison' && id) {
-      setGameState(prev => ({ ...prev, witchPoisonedId: id, witchStatus: { ...prev.witchStatus, hasPoisonPotion: false } }));
-      addLog({ day: gameState.day, phase: Phase.NIGHT_WITCH, type: 'witch', message: `你毒杀了${id}号。` });
-    } else {
-      addLog({ day: gameState.day, phase: Phase.NIGHT_WITCH, type: 'witch', message: `你没有使用任何药。` });
-    }
-    nextPhase();
-  };
-  const humanHunterShoot = (id: number | null) => {
-    if (id) {
-      const p = [...gameState.players];
-      const shot = p.find(pl => pl.id === id)!;
-      shot.isAlive = false; shot.deathDay = gameState.day; shot.deathReason = '猎人带走';
-      addLog({ day: gameState.day, phase: Phase.NIGHT_RESULT, type: 'hunter',
-        message: `🏹 你开枪带走了${id}号（${ROLE_LABELS[shot.role]}）` });
-      setGameState(prev => ({ ...prev, players: p, hunterMustShoot: false }));
-    } else {
-      setGameState(prev => ({ ...prev, hunterMustShoot: false }));
-    }
-    nextPhase();
-  };
-  const humanSheriffElect = (run: boolean) => {
-    const candidates = run ? [...gameState.sheriffCandidates, 1].sort((a, b) => a - b) : gameState.sheriffCandidates;
-    setGameState(prev => ({ ...prev, sheriffCandidates: candidates }));
-    addLog({ day: gameState.day, phase: Phase.SHERIFF_ELECT, type: 'system',
-      message: `竞选名单：${candidates.length > 0 ? candidates.map(id => `${id}号`).join('、') : '无人上警'}` });
-    nextPhase();
+  // ── Derived ──
+  const hp=gs.players.find(p=>p.isHuman);
+  const hr=hp?.role??Role.VILLAGER;
+  const ha=hp?.isAlive??false;
+  const {phase,day}=gs;
+  const isNight=phase.startsWith('NIGHT');
+  const alive=gs.players.filter(p=>p.isAlive);
+  const bg=isNight?PHASE_BG.NIGHT:phase.startsWith('SHERIFF')?PHASE_BG.SHERIFF:phase===Phase.DAY_VOTING||phase===Phase.DAY_RESULT?PHASE_BG.VOTE:PHASE_BG.DAY;
+
+  const phaseLabel: Record<string,string> = {
+    NIGHT_GUARD:'守卫守护', NIGHT_WOLVES:'狼人出击', NIGHT_SEER:'预言家查验',
+    NIGHT_WITCH:'女巫行动', NIGHT_RESULT:'黎明来临', SHERIFF_ELECT:'警长竞选',
+    SHERIFF_SPEECH:'竞选发言', SHERIFF_VOTE:'选举投票', SHERIFF_RESULT:'选举结果',
+    DAY_DISCUSSION:'白天辩论', DAY_VOTING:'投票放逐', DAY_RESULT:'放逐结果',
+    SHERIFF_ACTION:'警徽移交', GAME_OVER:'游戏结束',
   };
 
-  // ─── Derived State ────────────────────────────────────────────────────────
-  const humanPlayer = gameState.players.find(p => p.isHuman);
-  const humanRole = humanPlayer?.role ?? Role.VILLAGER;
-  const humanAlive = humanPlayer?.isAlive ?? false;
-  const { phase, day } = gameState;
-  const isNight = phase.startsWith('NIGHT');
-  const alivePlayers = gameState.players.filter(p => p.isAlive);
-
-  const bgColor = isNight ? PHASE_COLORS.NIGHT
-    : phase.startsWith('SHERIFF') ? PHASE_COLORS.SHERIFF
-    : phase === Phase.DAY_VOTING || phase === Phase.DAY_RESULT ? PHASE_COLORS.VOTE
-    : PHASE_COLORS.DAY;
-
-  // ─── Render ───────────────────────────────────────────────────────────────
   return (
-    <div className="flex flex-col lg:flex-row h-screen overflow-hidden transition-colors duration-1000"
-      style={{ background: bgColor, fontFamily: "'Noto Serif SC', serif" }}>
+    <div className="h-screen flex flex-col lg:flex-row overflow-hidden text-white"
+      style={{background:bg,transition:'background 1s ease',fontFamily:"'Noto Serif SC',serif"}}>
 
-      {/* ── Sidebar ── */}
-      <aside className="w-full lg:w-72 flex-shrink-0 border-b lg:border-b-0 lg:border-r overflow-y-auto"
-        style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(12px)' }}>
+      {/* ════ SIDEBAR ════ */}
+      <aside className="w-full lg:w-64 flex-shrink-0 flex flex-col lg:h-full overflow-hidden"
+        style={{background:'rgba(0,0,0,0.55)',backdropFilter:'blur(16px)',borderRight:'1px solid rgba(255,255,255,0.07)'}}>
 
-        <div className="p-4 lg:p-5">
-          {/* Title */}
-          <div className="text-center mb-5 lg:mb-6">
-            <div className="text-2xl lg:text-3xl mb-1">🐺</div>
-            <h1 className="text-base lg:text-lg font-bold tracking-[0.3em]" style={{ color: '#e8c97a' }}>狼人杀</h1>
-            <div className="text-[10px] tracking-widest opacity-40 uppercase mt-0.5">AI 博弈对战</div>
-          </div>
-
-          {/* Your Role Card */}
-          {humanPlayer && (
-            <div className="mb-4 p-3 lg:p-4 rounded-xl border" style={{
-              background: `${ROLE_COLORS[humanRole]}18`,
-              borderColor: `${ROLE_COLORS[humanRole]}50`,
-            }}>
-              <div className="text-[10px] uppercase tracking-widest opacity-50 mb-2">你的身份</div>
-              <div className="flex items-center gap-3">
-                <span className="text-3xl">{ROLE_ICONS[humanRole]}</span>
-                <div>
-                  <div className="font-bold text-base" style={{ color: ROLE_COLORS[humanRole] }}>{ROLE_LABELS[humanRole]}</div>
-                  <div className="text-[10px] opacity-50">{getSide(humanRole) === Side.GOOD ? '好人阵营' : '狼人阵营'}</div>
-                </div>
-              </div>
-              {humanRole === Role.WEREWOLF && (
-                <div className="mt-2 text-[11px] opacity-60">
-                  狼队友：{gameState.players.filter(p => p.role === Role.WEREWOLF && p.id !== 1 && p.isAlive).map(p => `${p.id}号`).join('、') || '无'}
-                </div>
-              )}
-              {humanRole === Role.SEER && gameState.seerRecords.length > 0 && (
-                <div className="mt-2 space-y-0.5">
-                  <div className="text-[10px] uppercase tracking-widest opacity-40 mb-1">查验记录</div>
-                  {gameState.seerRecords.map((r, i) => (
-                    <div key={i} className="flex justify-between text-[11px] font-mono">
-                      <span className="opacity-70">{r.targetId}号</span>
-                      <span style={{ color: r.side === Side.GOOD ? '#52e090' : '#e05252' }}>
-                        {r.side === Side.GOOD ? '✅ 好人' : '❌ 狼人'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {humanRole === Role.WITCH && (
-                <div className="mt-2 flex gap-3 text-[11px]">
-                  <span style={{ color: gameState.witchStatus.hasSavePotion ? '#52e090' : '#666' }}>
-                    {gameState.witchStatus.hasSavePotion ? '💊 解药' : '💊 已用'}
-                  </span>
-                  <span style={{ color: gameState.witchStatus.hasPoisonPotion ? '#e05252' : '#666' }}>
-                    {gameState.witchStatus.hasPoisonPotion ? '🧪 毒药' : '🧪 已用'}
-                  </span>
-                </div>
-              )}
+        {/* Logo */}
+        <div className="px-5 pt-5 pb-4 border-b" style={{borderColor:'rgba(255,255,255,0.07)'}}>
+          <div className="flex items-center gap-3">
+            <div className="text-3xl">🐺</div>
+            <div>
+              <div className="font-black tracking-[0.25em] text-base" style={{color:'#e8c97a'}}>狼 人 杀</div>
+              <div className="text-[10px] tracking-widest opacity-30 uppercase">AI Battle · Day {day}</div>
             </div>
-          )}
-
-          {/* Player List */}
-          <div className="text-[10px] uppercase tracking-widest opacity-40 mb-2">玩家列表</div>
-          <div className="grid grid-cols-2 lg:grid-cols-1 gap-1.5 lg:gap-2">
-            {gameState.players.map(p => (
-              <div key={p.id}
-                className="flex items-center gap-2 px-2.5 py-2 rounded-lg transition-all"
-                style={{
-                  background: p.isAlive ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.3)',
-                  border: p.id === 1 ? `1px solid ${ROLE_COLORS[humanRole]}60` : '1px solid rgba(255,255,255,0.06)',
-                  opacity: p.isAlive ? 1 : 0.45,
-                }}>
-                <span className="text-[10px] font-mono opacity-30 w-4">{p.id}</span>
-                <span className="text-sm">{p.isAlive ? '❓' : ROLE_ICONS[p.role]}</span>
-                <span className="text-xs flex-1 truncate" style={{ color: p.id === 1 ? ROLE_COLORS[humanRole] : '#ccc', textDecoration: p.isAlive ? 'none' : 'line-through' }}>
-                  {p.id === 1 ? '你' : p.name}
-                </span>
-                {p.id === gameState.sheriffId && p.isAlive && <Crown className="w-3 h-3 text-yellow-400 flex-shrink-0" />}
-                {!p.isAlive && <Skull className="w-3 h-3 opacity-30 flex-shrink-0" />}
-              </div>
-            ))}
           </div>
+        </div>
+
+        {/* Role Card */}
+        {hp && (
+          <div className="mx-4 mt-4 p-4 rounded-2xl relative overflow-hidden"
+            style={{background:`linear-gradient(135deg,${RC[hr]}22,${RC[hr]}08)`,border:`1px solid ${RC[hr]}44`}}>
+            <div className="absolute -right-4 -top-4 text-6xl opacity-10">{ROLE_ICONS[hr]}</div>
+            <div className="text-[10px] uppercase tracking-widest opacity-40 mb-2">你的身份</div>
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">{ROLE_ICONS[hr]}</span>
+              <div>
+                <div className="font-bold text-lg leading-tight" style={{color:RC[hr]}}>{ROLE_LABELS[hr]}</div>
+                <div className="text-[10px] opacity-40">{getSide(hr)===Side.GOOD?'好人阵营':'狼人阵营'}</div>
+              </div>
+            </div>
+            {hr===Role.WEREWOLF&&(
+              <div className="mt-3 pt-3 border-t text-xs" style={{borderColor:`${RC[hr]}30`}}>
+                <span className="opacity-40">队友：</span>
+                <span style={{color:RC[hr]}}>
+                  {gs.players.filter(p=>p.role===Role.WEREWOLF&&p.id!==1&&p.isAlive).map(p=>`${p.id}号`).join('、')||'无'}
+                </span>
+              </div>
+            )}
+            {hr===Role.SEER&&gs.seerRecords.length>0&&(
+              <div className="mt-3 pt-3 border-t space-y-1" style={{borderColor:`${RC[hr]}30`}}>
+                <div className="text-[10px] opacity-40 uppercase tracking-widest">查验记录</div>
+                {gs.seerRecords.map((r,i)=>(
+                  <div key={i} className="flex justify-between text-xs font-mono">
+                    <span className="opacity-60">{r.targetId}号</span>
+                    <span style={{color:r.side===Side.GOOD?'#52e090':'#e05252'}}>{r.side===Side.GOOD?'✅ 好人':'❌ 狼人'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {hr===Role.WITCH&&(
+              <div className="mt-3 pt-3 border-t flex gap-4 text-xs" style={{borderColor:`${RC[hr]}30`}}>
+                <span style={{color:gs.witchStatus.hasSavePotion?'#52e090':'#555'}}>💊 解药{gs.witchStatus.hasSavePotion?'':'(已用)'}</span>
+                <span style={{color:gs.witchStatus.hasPoisonPotion?'#e05252':'#555'}}>🧪 毒药{gs.witchStatus.hasPoisonPotion?'':'(已用)'}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Players */}
+        <div className="flex-1 overflow-y-auto px-4 mt-4 pb-4 space-y-1.5">
+          <div className="text-[10px] uppercase tracking-widest opacity-30 mb-2">玩家列表</div>
+          {gs.players.map(p=>(
+            <div key={p.id} className="flex items-center gap-2.5 px-3 py-2 rounded-xl transition-all"
+              style={{
+                background:p.isAlive?'rgba(255,255,255,0.04)':'rgba(0,0,0,0.3)',
+                border:p.id===1?`1px solid ${RC[hr]}40`:'1px solid rgba(255,255,255,0.05)',
+                opacity:p.isAlive?1:0.4,
+              }}>
+              <span className="text-[10px] font-mono opacity-20 w-4 text-right">{p.id}</span>
+              <span className="text-base">{p.isAlive?'❓':ROLE_ICONS[p.role]}</span>
+              <span className="text-xs flex-1 truncate" style={{color:p.id===1?RC[hr]:'#ccc',textDecoration:p.isAlive?'none':'line-through'}}>
+                {p.id===1?'你':p.name}
+              </span>
+              {p.id===gs.sheriffId&&p.isAlive&&<Crown className="w-3 h-3 flex-shrink-0" style={{color:'#fbbf24'}}/>}
+              {!p.isAlive&&<Skull className="w-3 h-3 opacity-20 flex-shrink-0"/>}
+              {p.id===gs.idiotRevealedId&&<span className="text-[10px]">🃏</span>}
+            </div>
+          ))}
         </div>
       </aside>
 
-      {/* ── Main ── */}
+      {/* ════ MAIN ════ */}
       <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Phase Header */}
-        <header className="flex-shrink-0 px-4 lg:px-6 py-3 flex items-center justify-between"
-          style={{ background: 'rgba(0,0,0,0.5)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+
+        {/* Header */}
+        <header className="flex-shrink-0 px-5 py-3 flex items-center justify-between"
+          style={{background:'rgba(0,0,0,0.4)',backdropFilter:'blur(12px)',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ background: isNight ? '#2d1b69' : '#6b3a1f' }}>
-              {isNight ? <Moon className="w-4 h-4 text-purple-300" /> : <Sun className="w-4 h-4 text-amber-300" />}
+            <div className="w-9 h-9 rounded-xl flex items-center justify-center"
+              style={{background:isNight?'rgba(139,92,246,0.2)':'rgba(251,191,36,0.2)',border:isNight?'1px solid rgba(139,92,246,0.4)':'1px solid rgba(251,191,36,0.4)'}}>
+              {isNight?<Moon className="w-4 h-4" style={{color:'#a78bfa'}}/>:<Sun className="w-4 h-4" style={{color:'#fbbf24'}}/>}
             </div>
             <div>
-              <div className="text-[10px] opacity-40 uppercase tracking-widest">第 {day} 天</div>
-              <div className="text-sm font-bold" style={{ color: '#e8c97a' }}>
-                {phase === Phase.NIGHT_GUARD && '守卫降临'}
-                {phase === Phase.NIGHT_WOLVES && '黑夜猎杀'}
-                {phase === Phase.NIGHT_SEER && '预言家查验'}
-                {phase === Phase.NIGHT_WITCH && '女巫行动'}
-                {phase === Phase.NIGHT_RESULT && '黎明降临'}
-                {phase === Phase.SHERIFF_ELECT && '警长竞选'}
-                {phase === Phase.SHERIFF_SPEECH && '竞选发言'}
-                {phase === Phase.SHERIFF_VOTE && '警长投票'}
-                {phase === Phase.SHERIFF_RESULT && '当选结果'}
-                {phase === Phase.DAY_DISCUSSION && '白天辩论'}
-                {phase === Phase.DAY_VOTING && '投票放逐'}
-                {phase === Phase.DAY_RESULT && '放逐结果'}
-                {phase === Phase.GAME_OVER && '游戏结束'}
-              </div>
+              <div className="text-[10px] opacity-30 uppercase tracking-widest">第 {day} 天</div>
+              <div className="text-sm font-bold" style={{color:'#e8c97a'}}>{phaseLabel[phase]||phase}</div>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {isProcessing && (
-              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-widest font-bold"
-                style={{ background: 'rgba(255,200,50,0.1)', color: '#e8c97a', border: '1px solid rgba(255,200,50,0.2)' }}>
-                <div className="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />
-                AI思考中
+            {busy&&(
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-widest font-bold"
+                style={{background:'rgba(251,191,36,0.1)',color:'#fbbf24',border:'1px solid rgba(251,191,36,0.2)'}}>
+                <motion.div className="w-1.5 h-1.5 rounded-full bg-yellow-400"
+                  animate={{opacity:[1,0.3,1]}} transition={{duration:1,repeat:Infinity}}/>
+                AI 思考中
               </div>
             )}
-            <button onClick={() => setGameState(INITIAL_STATE)}
-              className="p-2 rounded-lg opacity-40 hover:opacity-80 transition-opacity"
-              style={{ background: 'rgba(255,255,255,0.05)' }}>
-              <RotateCcw className="w-3.5 h-3.5 text-white" />
+            <button onClick={()=>{setGs(INITIAL);setSheriffElectDone(false);}}
+              className="p-2 rounded-lg transition-opacity hover:opacity-80"
+              style={{background:'rgba(255,255,255,0.05)',opacity:0.4}}>
+              <RotateCcw className="w-3.5 h-3.5"/>
             </button>
           </div>
         </header>
 
-        {/* Log Area */}
-        <div className="flex-1 overflow-y-auto px-4 lg:px-6 py-4 space-y-2.5">
-          <AnimatePresence>
-            {gameState.logs.map(log => (
-              <motion.div key={log.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                className="flex gap-3 items-start">
-                <div className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 mt-0.5"
+        {/* Log */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
+          <AnimatePresence initial={false}>
+            {gs.logs.map(l=>(
+              <motion.div key={l.id} initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} className="flex gap-3 items-start">
+                <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 text-xs"
                   style={{
-                    background: log.type === 'wolf' ? '#c0392b30' : log.type === 'seer' ? '#8e44ad30'
-                      : log.type === 'witch' ? '#16a08530' : log.type === 'guard' ? '#2980b930'
-                      : log.type === 'hunter' ? '#d3540030' : log.type === 'discussion' ? '#ffffff15'
-                      : log.type === 'vote' ? '#e8c97a20' : '#ffffff10',
-                    color: log.type === 'wolf' ? '#e05252' : log.type === 'seer' ? '#b07ae0'
-                      : log.type === 'witch' ? '#52c0a0' : log.type === 'guard' ? '#52a0e0'
-                      : log.type === 'hunter' ? '#e09052' : '#999',
+                    background:l.type==='wolf'?'rgba(224,82,82,0.15)':l.type==='seer'?'rgba(167,139,250,0.15)':l.type==='witch'?'rgba(52,211,153,0.15)':l.type==='discussion'?'rgba(255,255,255,0.06)':l.type==='vote'?'rgba(251,191,36,0.12)':'rgba(255,255,255,0.06)',
+                    color:l.type==='wolf'?'#e05252':l.type==='seer'?'#a78bfa':l.type==='witch'?'#34d399':l.type==='vote'?'#fbbf24':'#888',
                   }}>
-                  {LOG_ICONS[log.type] || LOG_ICONS.system}
+                  {l.type==='wolf'?'🐺':l.type==='seer'?'🔮':l.type==='witch'?'🧙':l.type==='guard'?'🛡':l.type==='hunter'?'🏹':l.type==='vote'?'⚖':l.type==='discussion'?'💬':'📜'}
                 </div>
                 <div className="flex-1 min-w-0">
-                  {log.playerName && (
-                    <span className="text-[10px] font-bold uppercase tracking-widest opacity-40 mr-2">
-                      {log.playerName}
-                    </span>
-                  )}
-                  <span className={`text-sm leading-relaxed ${log.type === 'discussion' ? 'italic' : 'opacity-80'}`}
-                    style={{ color: log.type === 'discussion' ? '#e8d5b0' : '#aaa' }}>
-                    {log.message}
+                  {l.playerName&&<span className="text-[10px] font-bold uppercase tracking-widest mr-2" style={{color:'#e8c97a',opacity:0.7}}>{l.playerName}</span>}
+                  <span className={`text-sm leading-relaxed ${l.type==='discussion'?'italic':''}`}
+                    style={{color:l.type==='discussion'?'#e8d5b0':'rgba(255,255,255,0.55)'}}>
+                    {l.message}
                   </span>
                 </div>
               </motion.div>
             ))}
           </AnimatePresence>
-          <div ref={logEndRef} />
+          <div ref={logEnd}/>
         </div>
 
         {/* Action Panel */}
-        <div className="flex-shrink-0 px-4 lg:px-6 py-4 min-h-[120px] flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.5)', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex-shrink-0 px-5 py-4 min-h-28 flex items-center justify-center"
+          style={{background:'rgba(0,0,0,0.5)',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
           <AnimatePresence mode="wait">
-            {!isProcessing && (
-              <motion.div key={phase} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }} className="w-full max-w-xl">
+            {!busy?(
+              <motion.div key={phase+gs.currentDiscussionIndex} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0}} className="w-full max-w-2xl">
 
                 {/* Guard */}
-                {phase === Phase.NIGHT_GUARD && humanRole === Role.GUARD && (
-                  <ActionPanel label="守卫，选择守护目标" icon={<Shield className="w-4 h-4" />} color="#2980b9">
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {alivePlayers.filter(p => p.id !== gameState.lastGuardTargetId).map(p => (
-                        <ActionBtn key={p.id} onClick={() => humanGuardAction(p.id)} color="#2980b9">{p.id}号</ActionBtn>
-                      ))}
-                      <ActionBtn onClick={() => humanGuardAction(null)} color="#555">空守</ActionBtn>
-                    </div>
-                  </ActionPanel>
+                {phase===Phase.NIGHT_GUARD&&hr===Role.GUARD&&(
+                  <Panel label="守卫：选择守护目标" color={RC[Role.GUARD]}>
+                    <Btns>{alive.filter(p=>p.id!==gs.lastGuardTargetId).map(p=><Btn key={p.id} color={RC[Role.GUARD]} onClick={()=>hGuard(p.id)}>{p.id}号</Btn>)}<Btn color="#555" onClick={()=>hGuard(null)}>空守</Btn></Btns>
+                  </Panel>
                 )}
 
-                {/* Wolf Kill */}
-                {phase === Phase.NIGHT_WOLVES && humanRole === Role.WEREWOLF && (
-                  <ActionPanel label="狼人行动：选择击杀目标" icon={<Swords className="w-4 h-4" />} color="#c0392b">
+                {/* Wolf */}
+                {phase===Phase.NIGHT_WOLVES&&hr===Role.WEREWOLF&&(
+                  <Panel label="狼人：选择今晚击杀目标" color={RC[Role.WEREWOLF]}>
                     <div className="text-center text-xs mb-3 px-3 py-2 rounded-lg"
-                      style={{ background: 'rgba(192,57,43,0.15)', border: '1px solid rgba(192,57,43,0.3)' }}>
-                      <span className="opacity-60">🐺 你的狼队友：</span>
-                      <span className="font-bold ml-1" style={{ color: '#e05252' }}>
-                        {gameState.players
-                          .filter(p => p.role === Role.WEREWOLF && p.id !== 1 && p.isAlive)
-                          .map(p => `${p.id}号`).join('、') || '（无存活队友）'}
+                      style={{background:'rgba(224,82,82,0.1)',border:'1px solid rgba(224,82,82,0.25)'}}>
+                      <span className="opacity-50">🐺 队友：</span>
+                      <span className="font-bold ml-1" style={{color:'#e05252'}}>
+                        {gs.players.filter(p=>p.role===Role.WEREWOLF&&p.id!==1&&p.isAlive).map(p=>`${p.id}号`).join('、')||'无存活队友'}
                       </span>
-                      <div className="text-[10px] opacity-40 mt-1">所有狼人各自投票，票数最多的目标被击杀</div>
+                      <div className="text-[10px] opacity-30 mt-0.5">所有狼人各自投票，票数最多者被刀</div>
                     </div>
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {alivePlayers.filter(p => p.role !== Role.WEREWOLF).map(p => (
-                        <ActionBtn key={p.id} onClick={() => humanKillVote(p.id)} color="#c0392b">{p.id}号</ActionBtn>
-                      ))}
-                    </div>
-                  </ActionPanel>
+                    <Btns>{alive.filter(p=>p.role!==Role.WEREWOLF).map(p=><Btn key={p.id} color={RC[Role.WEREWOLF]} onClick={()=>hKillVote(p.id)}>{p.id}号</Btn>)}</Btns>
+                  </Panel>
                 )}
 
                 {/* Seer */}
-                {phase === Phase.NIGHT_SEER && humanRole === Role.SEER && (
-                  <ActionPanel label="预言家，选择查验目标" icon={<Eye className="w-4 h-4" />} color="#8e44ad">
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {alivePlayers.filter(p => !p.isHuman && !gameState.seerRecords.find(r => r.targetId === p.id)).map(p => (
-                        <ActionBtn key={p.id} onClick={() => humanCheck(p.id)} color="#8e44ad">{p.id}号</ActionBtn>
-                      ))}
-                    </div>
-                  </ActionPanel>
+                {phase===Phase.NIGHT_SEER&&hr===Role.SEER&&(
+                  <Panel label="预言家：选择查验目标" color={RC[Role.SEER]}>
+                    <Btns>{alive.filter(p=>!p.isHuman&&!gs.seerRecords.find(r=>r.targetId===p.id)).map(p=><Btn key={p.id} color={RC[Role.SEER]} onClick={()=>hCheck(p.id)}>{p.id}号</Btn>)}</Btns>
+                  </Panel>
                 )}
 
                 {/* Witch */}
-                {phase === Phase.NIGHT_WITCH && humanRole === Role.WITCH && (
-                  <ActionPanel label="女巫，使用你的药" icon={<Wand2 className="w-4 h-4" />} color="#16a085">
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {gameState.witchStatus.hasSavePotion && gameState.nightKilledId && (
-                        <ActionBtn onClick={() => humanWitch('save')} color="#52c0a0">
-                          💊 救{gameState.nightKilledId}号
-                        </ActionBtn>
-                      )}
-                      {gameState.witchStatus.hasPoisonPotion && alivePlayers.filter(p => !p.isHuman).map(p => (
-                        <ActionBtn key={p.id} onClick={() => humanWitch('poison', p.id)} color="#c0392b">
-                          🧪 毒{p.id}号
-                        </ActionBtn>
-                      ))}
-                      <ActionBtn onClick={() => humanWitch('skip')} color="#555">不操作</ActionBtn>
-                    </div>
-                  </ActionPanel>
+                {phase===Phase.NIGHT_WITCH&&hr===Role.WITCH&&(
+                  <Panel label="女巫：使用你的药" color={RC[Role.WITCH]}>
+                    <Btns>
+                      {gs.witchStatus.hasSavePotion&&gs.nightKilledId&&<Btn color={RC[Role.WITCH]} onClick={()=>hWitch('save')}>💊 救{gs.nightKilledId}号</Btn>}
+                      {gs.witchStatus.hasPoisonPotion&&alive.filter(p=>!p.isHuman).map(p=><Btn key={p.id} color={RC[Role.WEREWOLF]} onClick={()=>hWitch('poison',p.id)}>🧪 毒{p.id}号</Btn>)}
+                      <Btn color="#555" onClick={()=>hWitch('skip')}>不操作</Btn>
+                    </Btns>
+                  </Panel>
                 )}
 
                 {/* Night waiting */}
-                {((phase === Phase.NIGHT_WOLVES && humanRole !== Role.WEREWOLF) ||
-                  (phase === Phase.NIGHT_SEER && humanRole !== Role.SEER) ||
-                  (phase === Phase.NIGHT_WITCH && humanRole !== Role.WITCH) ||
-                  (phase === Phase.NIGHT_GUARD && humanRole !== Role.GUARD)) && (
-                  <div className="text-center opacity-30 text-sm italic">黑夜降临，请闭眼...</div>
+                {((phase===Phase.NIGHT_WOLVES&&hr!==Role.WEREWOLF)||(phase===Phase.NIGHT_SEER&&hr!==Role.SEER)||(phase===Phase.NIGHT_WITCH&&hr!==Role.WITCH)||(phase===Phase.NIGHT_GUARD&&hr!==Role.GUARD))&&(
+                  <p className="text-center opacity-25 text-sm italic">黑夜漫漫，请闭眼...</p>
                 )}
 
                 {/* Night Result */}
-                {phase === Phase.NIGHT_RESULT && !gameState.hunterMustShoot && (
-                  <div className="text-center">
-                    <ConfirmBtn onClick={() => nextPhase()}>确认，进入白天</ConfirmBtn>
-                  </div>
+                {phase===Phase.NIGHT_RESULT&&!gs.hunterMustShoot&&<CenterBtn onClick={()=>advance()}>确认，天亮了</CenterBtn>}
+
+                {/* Hunter */}
+                {gs.hunterMustShoot&&ha&&(
+                  <Panel label="猎人！死前可开枪带走一人" color={RC[Role.HUNTER]}>
+                    <Btns>{alive.filter(p=>!p.isHuman).map(p=><Btn key={p.id} color={RC[Role.HUNTER]} onClick={()=>hHunter(p.id)}>{p.id}号</Btn>)}<Btn color="#555" onClick={()=>hHunter(null)}>放弃开枪</Btn></Btns>
+                  </Panel>
                 )}
 
-                {/* Hunter shoot */}
-                {gameState.hunterMustShoot && humanAlive && (
-                  <ActionPanel label="你是猎人！死前开枪带走一人" icon={<Crosshair className="w-4 h-4" />} color="#d35400">
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {alivePlayers.filter(p => !p.isHuman).map(p => (
-                        <ActionBtn key={p.id} onClick={() => humanHunterShoot(p.id)} color="#d35400">{p.id}号</ActionBtn>
-                      ))}
-                      <ActionBtn onClick={() => humanHunterShoot(null)} color="#555">放弃开枪</ActionBtn>
+                {/* Sheriff Elect — wait for AI to finish, then show buttons */}
+                {phase===Phase.SHERIFF_ELECT&&sheriffElectDone&&(
+                  <Panel label="警长竞选：你要上警吗？" color="#fbbf24">
+                    <div className="text-xs text-center mb-3 opacity-40">
+                      已上警：{gs.sheriffCandidates.length>0?gs.sheriffCandidates.map(id=>`${id}号`).join('、'):'暂无'}
                     </div>
-                  </ActionPanel>
+                    <Btns>
+                      <Btn color="#fbbf24" onClick={()=>hSheriffElect(true)}>⬆️ 参与竞选</Btn>
+                      <Btn color="#555" onClick={()=>hSheriffElect(false)}>放弃竞选</Btn>
+                    </Btns>
+                  </Panel>
                 )}
-
-                {/* Sheriff Election */}
-                {phase === Phase.SHERIFF_ELECT && (
-                  <ActionPanel label="警长竞选：是否上警？" icon={<Crown className="w-4 h-4" />} color="#e8c97a">
-                    <div className="flex gap-3 justify-center">
-                      <ActionBtn onClick={() => humanSheriffElect(true)} color="#e8c97a">参与竞选 ⬆️</ActionBtn>
-                      <ActionBtn onClick={() => humanSheriffElect(false)} color="#555">放弃竞选</ActionBtn>
-                    </div>
-                  </ActionPanel>
+                {phase===Phase.SHERIFF_ELECT&&!sheriffElectDone&&(
+                  <p className="text-center opacity-25 text-sm italic">AI 玩家正在决定是否上警...</p>
                 )}
 
                 {/* Sheriff Speech */}
-                {phase === Phase.SHERIFF_SPEECH && gameState.currentDiscussionIndex === 1 && (
-                  <SpeechInput value={humanSpeechInput} onChange={setHumanSpeechInput} onSubmit={submitHumanSpeech}
-                    placeholder="输入竞选发言..." />
+                {phase===Phase.SHERIFF_SPEECH&&gs.currentDiscussionIndex===1&&(
+                  <SpeechBox value={speech} onChange={setSpeech} onSubmit={submitSpeech} placeholder="输入竞选发言..."/>
                 )}
-                {phase === Phase.SHERIFF_SPEECH && gameState.currentDiscussionIndex !== 1 && gameState.currentDiscussionIndex > 0 && (
-                  <div className="text-center opacity-50 text-sm italic">{gameState.currentDiscussionIndex}号玩家正在发言...</div>
+                {phase===Phase.SHERIFF_SPEECH&&gs.currentDiscussionIndex>1&&(
+                  <p className="text-center opacity-40 text-sm italic">{gs.currentDiscussionIndex}号正在竞选发言...</p>
+                )}
+                {phase===Phase.SHERIFF_SPEECH&&gs.currentDiscussionIndex===0&&(
+                  <p className="text-center opacity-25 text-sm italic">等待竞选发言开始...</p>
                 )}
 
                 {/* Sheriff Vote */}
-                {phase === Phase.SHERIFF_VOTE && (
-                  <ActionPanel label="投票选出警长" icon={<Crown className="w-4 h-4" />} color="#e8c97a">
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {gameState.sheriffCandidates.map(id => (
-                        <ActionBtn key={id} onClick={() => { const v: Record<number,number> = {...gameState.votes, 1: id}; finalizeSheriffVote(v, gameState.voteReasons); }} color="#e8c97a">
-                          投{id}号
-                        </ActionBtn>
-                      ))}
-                      <ActionBtn onClick={() => finalizeSheriffVote(gameState.votes, gameState.voteReasons)} color="#555">弃权</ActionBtn>
-                    </div>
-                  </ActionPanel>
+                {phase===Phase.SHERIFF_VOTE&&(
+                  <Panel label="投票选出警长" color="#fbbf24">
+                    <Btns>
+                      {gs.sheriffCandidates.map(id=><Btn key={id} color="#fbbf24" onClick={()=>{const v={...gs.votes,1:id};finalizeSheriff(v,gs.voteReasons);}}>投{id}号</Btn>)}
+                      <Btn color="#555" onClick={()=>finalizeSheriff(gs.votes,gs.voteReasons)}>弃权</Btn>
+                    </Btns>
+                  </Panel>
                 )}
 
                 {/* Sheriff Result */}
-                {phase === Phase.SHERIFF_RESULT && (
-                  <div className="text-center"><ConfirmBtn onClick={() => nextPhase()}>确认结果</ConfirmBtn></div>
-                )}
+                {phase===Phase.SHERIFF_RESULT&&<CenterBtn onClick={()=>advance()}>确认结果</CenterBtn>}
 
                 {/* Sheriff Handoff */}
-                {phase === Phase.SHERIFF_ACTION && gameState.players.find(p => p.id === gameState.sheriffId)?.isHuman && (
-                  <ActionPanel label="你出局了！传递或撕毁警徽" icon={<Crown className="w-4 h-4" />} color="#e8c97a">
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {alivePlayers.filter(p => !p.isHuman).map(p => (
-                        <ActionBtn key={p.id} onClick={() => applySheriffHandoff(p.id)} color="#e8c97a">传给{p.id}号</ActionBtn>
-                      ))}
-                      <ActionBtn onClick={() => applySheriffHandoff(null)} color="#c0392b">撕毁警徽</ActionBtn>
-                    </div>
-                  </ActionPanel>
+                {phase===Phase.SHERIFF_ACTION&&gs.players.find(p=>p.id===gs.sheriffId)?.isHuman&&(
+                  <Panel label="你出局了，移交或撕毁警徽" color="#fbbf24">
+                    <Btns>
+                      {alive.filter(p=>!p.isHuman).map(p=><Btn key={p.id} color="#fbbf24" onClick={()=>doHandoff(p.id)}>传给{p.id}号</Btn>)}
+                      <Btn color={RC[Role.WEREWOLF]} onClick={()=>doHandoff(null)}>撕毁警徽</Btn>
+                    </Btns>
+                  </Panel>
                 )}
 
-                {/* Day Discussion */}
-                {phase === Phase.DAY_DISCUSSION && gameState.currentDiscussionIndex === -1 && (
+                {/* Discussion */}
+                {phase===Phase.DAY_DISCUSSION&&gs.currentDiscussionIndex===-1&&(
                   <div className="flex flex-col items-center gap-3">
-                    {gameState.sheriffId === 1 ? (
+                    {gs.sheriffId===1?(
                       <>
-                        <div className="text-xs opacity-50">你是警长，选择发言方向：</div>
-                        <div className="flex gap-3">
-                          <ActionBtn onClick={() => startDiscussion(1)} color="#e8c97a">顺时针 →</ActionBtn>
-                          <ActionBtn onClick={() => startDiscussion(-1)} color="#e8c97a">← 逆时针</ActionBtn>
-                        </div>
+                        <p className="text-xs opacity-40">你是警长，选择发言方向：</p>
+                        <Btns><Btn color="#fbbf24" onClick={()=>startDiscussion(1)}>顺时针 →</Btn><Btn color="#fbbf24" onClick={()=>startDiscussion(-1)}>← 逆时针</Btn></Btns>
                       </>
-                    ) : (
-                      <ConfirmBtn onClick={() => startDiscussion()}>开始辩论</ConfirmBtn>
-                    )}
+                    ):<CenterBtn onClick={()=>startDiscussion()}>开始辩论</CenterBtn>}
                   </div>
                 )}
-                {phase === Phase.DAY_DISCUSSION && gameState.currentDiscussionIndex === 1 && (
-                  <SpeechInput value={humanSpeechInput} onChange={setHumanSpeechInput} onSubmit={submitHumanSpeech}
-                    placeholder="输入你的发言（可留空跳过）..." />
+                {phase===Phase.DAY_DISCUSSION&&gs.currentDiscussionIndex===1&&(
+                  <SpeechBox value={speech} onChange={setSpeech} onSubmit={submitSpeech} placeholder="输入你的发言（留空跳过）..."/>
                 )}
-                {phase === Phase.DAY_DISCUSSION && gameState.currentDiscussionIndex > 1 && (
-                  <div className="text-center opacity-50 text-sm italic">{gameState.currentDiscussionIndex}号玩家正在发言...</div>
+                {phase===Phase.DAY_DISCUSSION&&gs.currentDiscussionIndex>1&&(
+                  <p className="text-center opacity-40 text-sm italic">{gs.currentDiscussionIndex}号玩家正在发言...</p>
                 )}
 
-                {/* Day Voting — Wait for human */}
-                {phase === Phase.DAY_VOTING && !humanVoted && (
-                  <ActionPanel label={`投票放逐（警长${gameState.sheriffId ? gameState.sheriffId + '号，1.5票' : '无'}）`}
-                    icon={<Vote className="w-4 h-4" />} color="#e05252">
-                    <div className="flex flex-wrap gap-2 justify-center">
-                      {alivePlayers.filter(p => !p.isHuman && gameState.idiotRevealedId !== p.id).map(p => (
-                        <ActionBtn key={p.id} onClick={() => handleHumanVote(p.id)} color="#e05252">投{p.id}号</ActionBtn>
-                      ))}
-                      <ActionBtn onClick={() => handleHumanVote(null)} color="#555">弃权</ActionBtn>
-                    </div>
-                  </ActionPanel>
+                {/* Day Vote */}
+                {phase===Phase.DAY_VOTING&&!humanVoted&&(
+                  <Panel label={`投票放逐${gs.sheriffId?` · 警长${gs.sheriffId}号拥有1.5票`:''}`} color={RC[Role.WEREWOLF]}>
+                    <Btns>
+                      {alive.filter(p=>!p.isHuman&&gs.idiotRevealedId!==p.id).map(p=><Btn key={p.id} color={RC[Role.WEREWOLF]} onClick={()=>humanVote(p.id)}>投{p.id}号</Btn>)}
+                      <Btn color="#555" onClick={()=>humanVote(null)}>弃权</Btn>
+                    </Btns>
+                  </Panel>
                 )}
-                {phase === Phase.DAY_VOTING && humanVoted && (
-                  <div className="text-center opacity-50 text-sm italic">正在统计AI投票...</div>
-                )}
+                {phase===Phase.DAY_VOTING&&humanVoted&&<p className="text-center opacity-25 text-sm italic">正在统计AI投票...</p>}
 
                 {/* Day Result */}
-                {phase === Phase.DAY_RESULT && !gameState.hunterMustShoot && (
-                  <div className="text-center"><ConfirmBtn onClick={() => nextPhase()}>进入夜晚</ConfirmBtn></div>
-                )}
+                {phase===Phase.DAY_RESULT&&!gs.hunterMustShoot&&<CenterBtn onClick={()=>advance()}>进入夜晚</CenterBtn>}
 
                 {/* Game Over */}
-                {phase === Phase.GAME_OVER && (
-                  <div className="text-center space-y-4">
-                    <div className="text-4xl">{gameState.winner === Side.GOOD ? '🎉' : '🐺'}</div>
-                    <div className="text-xl font-bold" style={{ color: '#e8c97a' }}>
-                      {gameState.winner === Side.GOOD ? '好人阵营胜利！' : '狼人阵营胜利！'}
+                {phase===Phase.GAME_OVER&&(
+                  <div className="text-center space-y-4 py-2">
+                    <div className="text-5xl">{gs.winner===Side.GOOD?'🎉':'🐺'}</div>
+                    <div className="text-2xl font-black tracking-wider" style={{color:'#e8c97a'}}>
+                      {gs.winner===Side.GOOD?'好人阵营胜利！':'狼人阵营胜利！'}
                     </div>
-                    <div className="flex flex-wrap gap-2 justify-center text-xs opacity-60">
-                      {gameState.players.map(p => (
-                        <span key={p.id} className="px-2 py-1 rounded-md"
-                          style={{ background: 'rgba(255,255,255,0.05)' }}>
+                    <div className="flex flex-wrap gap-1.5 justify-center">
+                      {gs.players.map(p=>(
+                        <span key={p.id} className="px-2 py-1 rounded-lg text-xs"
+                          style={{background:`${RC[p.role]}18`,border:`1px solid ${RC[p.role]}30`,color:RC[p.role]}}>
                           {p.id}号 {ROLE_ICONS[p.role]} {ROLE_LABELS[p.role]}
                         </span>
                       ))}
                     </div>
-                    <button onClick={() => setGameState(INITIAL_STATE)}
-                      className="px-6 py-2.5 rounded-xl font-bold text-sm transition-all hover:scale-105"
-                      style={{ background: '#e8c97a', color: '#1a0a00' }}>
+                    <button onClick={()=>{setGs(INITIAL);setSheriffElectDone(false);}}
+                      className="px-8 py-3 rounded-xl font-black text-sm transition-all hover:scale-105"
+                      style={{background:'#e8c97a',color:'#1a0a00'}}>
                       再来一局
                     </button>
                   </div>
                 )}
 
               </motion.div>
-            )}
-            {isProcessing && (
-              <div className="flex items-center gap-3">
-                {[0,1,2].map(i => (
-                  <motion.div key={i} animate={{ scale: [1,1.5,1], opacity: [0.3,1,0.3] }}
-                    transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
-                    className="w-2 h-2 rounded-full" style={{ background: '#e8c97a' }} />
+            ):(
+              <motion.div className="flex items-center gap-3">
+                {[0,1,2].map(i=>(
+                  <motion.div key={i} className="w-2 h-2 rounded-full" style={{background:'#e8c97a'}}
+                    animate={{scale:[1,1.6,1],opacity:[0.3,1,0.3]}}
+                    transition={{duration:1,repeat:Infinity,delay:i*0.2}}/>
                 ))}
-              </div>
+              </motion.div>
             )}
           </AnimatePresence>
         </div>
@@ -961,52 +690,50 @@ export default function App() {
   );
 }
 
-// ─── Sub Components ────────────────────────────────────────────────────────────
-function ActionPanel({ label, icon, color, children }: { label: string; icon: React.ReactNode; color: string; children: React.ReactNode }) {
-  return (
+// ── Mini Components ────────────────────────────────────────────────────────────
+function Panel({label,color,children}:{label:string;color:string;children:React.ReactNode}){
+  return(
     <div className="w-full space-y-3">
-      <div className="flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest" style={{ color, opacity: 0.8 }}>
-        {icon}{label}
-      </div>
+      <div className="text-center text-xs font-bold uppercase tracking-widest" style={{color,opacity:0.8}}>{label}</div>
       {children}
     </div>
   );
 }
-
-function ActionBtn({ onClick, color, children }: { onClick: () => void; color: string; children: React.ReactNode }) {
-  return (
+function Btns({children}:{children:React.ReactNode}){
+  return <div className="flex flex-wrap gap-2 justify-center">{children}</div>;
+}
+function Btn({onClick,color,children}:{onClick:()=>void;color:string;children:React.ReactNode}){
+  return(
     <button onClick={onClick}
       className="px-4 py-2 rounded-xl text-sm font-bold transition-all hover:scale-105 active:scale-95"
-      style={{ background: `${color}25`, border: `1px solid ${color}60`, color }}>
+      style={{background:`${color}20`,border:`1px solid ${color}50`,color}}>
       {children}
     </button>
   );
 }
-
-function ConfirmBtn({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick}
-      className="px-8 py-3 rounded-xl font-bold text-sm flex items-center gap-2 mx-auto transition-all hover:scale-105"
-      style={{ background: '#e8c97a', color: '#1a0a00' }}>
-      {children}<ChevronRight className="w-4 h-4" />
-    </button>
+function CenterBtn({onClick,children}:{onClick:()=>void;children:React.ReactNode}){
+  return(
+    <div className="flex justify-center">
+      <button onClick={onClick}
+        className="px-8 py-3 rounded-xl font-bold text-sm flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+        style={{background:'#e8c97a',color:'#1a0a00'}}>
+        {children}<ChevronRight className="w-4 h-4"/>
+      </button>
+    </div>
   );
 }
-
-function SpeechInput({ value, onChange, onSubmit, placeholder }: {
-  value: string; onChange: (v: string) => void; onSubmit: () => void; placeholder: string;
-}) {
-  return (
+function SpeechBox({value,onChange,onSubmit,placeholder}:{value:string;onChange:(v:string)=>void;onSubmit:()=>void;placeholder:string}){
+  return(
     <div className="flex gap-2 w-full">
-      <input value={value} onChange={e => onChange(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && onSubmit()}
+      <input value={value} onChange={e=>onChange(e.target.value)}
+        onKeyDown={e=>e.key==='Enter'&&onSubmit()}
         placeholder={placeholder}
         className="flex-1 px-4 py-2.5 rounded-xl text-sm outline-none"
-        style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#e8d5b0' }} />
+        style={{background:'rgba(255,255,255,0.07)',border:'1px solid rgba(255,255,255,0.12)',color:'#e8d5b0'}}/>
       <button onClick={onSubmit}
         className="px-5 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-all hover:scale-105"
-        style={{ background: '#e8c97a', color: '#1a0a00' }}>
-        <Send className="w-3.5 h-3.5" />发言
+        style={{background:'#e8c97a',color:'#1a0a00'}}>
+        <Send className="w-3.5 h-3.5"/>发言
       </button>
     </div>
   );
