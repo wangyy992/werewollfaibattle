@@ -1,0 +1,6 @@
+{
+  "name": "Werewolf AI Battle Simulator",
+  "description": "A Werewolf game simulator where 1 human plays against 9 AI players powered by Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
