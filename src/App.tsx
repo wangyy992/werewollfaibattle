@@ -34,6 +34,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [speech, setSpeech] = useState('');
   const [humanVoted, setHumanVoted] = useState(false);
+  const [mobileTab, setMobileTab] = useState<'game'|'players'>('game');
   const [sheriffElectDone, setSheriffElectDone] = useState(false);
   const logEnd = useRef<HTMLDivElement>(null);
   const processed = useRef<Set<number>>(new Set());
@@ -178,7 +179,11 @@ export default function App() {
     setSheriffElectDone(true);
   };
   const aiSheriffSpeech = () => {
-    if (gs.sheriffCandidates.length===0){advance();return;}
+    if (gs.sheriffCandidates.length===0){
+      // 无候选人，直接跳到白天
+      setGs(p=>({...p,isSheriffElectionCompleted:true,phase:Phase.DAY_DISCUSSION}));
+      return;
+    }
     setGs(p=>({...p,currentDiscussionIndex:p.sheriffCandidates[0]}));
   };
   const aiSheriffVote = async () => {
@@ -427,9 +432,14 @@ export default function App() {
   };
   const hSheriffElect=(run:boolean)=>{
     const cands=run?[...gs.sheriffCandidates,1].sort((a,b)=>a-b):gs.sheriffCandidates;
-    setGs(p=>({...p,sheriffCandidates:cands}));
-    log({day:gs.day,phase:Phase.SHERIFF_ELECT,type:'system',message:`竞选名单确定：${cands.length>0?cands.map(id=>`${id}号`).join('、'):'无人上警（将跳过竞选）'}`});
-    advance();
+    setGs(p=>({...p,sheriffCandidates:cands,isSheriffElectionCompleted:true}));
+    log({day:gs.day,phase:Phase.SHERIFF_ELECT,type:'system',message:`竞选名单确定：${cands.length>0?cands.map(id=>`${id}号`).join('、'):'无人上警，跳过警长竞选。'}`});
+    if (cands.length===0) {
+      // 没人上警，直接跳到白天发言
+      setGs(p=>({...p,sheriffCandidates:cands,isSheriffElectionCompleted:true,phase:Phase.DAY_DISCUSSION}));
+    } else {
+      advance();
+    }
   };
 
   // ── Derived ──
@@ -449,183 +459,171 @@ export default function App() {
     SHERIFF_ACTION:'警徽移交', GAME_OVER:'游戏结束',
   };
 
+  // Auto-switch to game tab when it's human's turn
+  useEffect(() => { setMobileTab('game'); }, [gs.phase, gs.currentDiscussionIndex]);
+
   return (
-    <div className="h-screen flex flex-col lg:flex-row overflow-hidden text-white"
+    <div className="h-[100dvh] flex flex-col overflow-hidden text-white"
       style={{background:bg,transition:'background 1s ease',fontFamily:"'Noto Serif SC',serif"}}>
 
-      {/* ════ SIDEBAR ════ */}
-      <aside className="w-full lg:w-64 flex-shrink-0 flex flex-col lg:h-full overflow-hidden"
-        style={{background:'rgba(0,0,0,0.55)',backdropFilter:'blur(16px)',borderRight:'1px solid rgba(255,255,255,0.07)'}}>
+      {/* ════ DESKTOP: side-by-side | MOBILE: tabs ════ */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
 
-        {/* Logo */}
-        <div className="px-5 pt-5 pb-4 border-b" style={{borderColor:'rgba(255,255,255,0.07)'}}>
-          <div className="flex items-center gap-3">
-            <div className="text-3xl">🐺</div>
-            <div>
-              <div className="font-black tracking-[0.25em] text-base" style={{color:'#e8c97a'}}>狼 人 杀</div>
-              <div className="text-[10px] tracking-widest opacity-30 uppercase">AI Battle · Day {day}</div>
-            </div>
-          </div>
-        </div>
+        {/* SIDEBAR — hidden on mobile unless players tab active */}
+        <aside className={`${mobileTab==='players'?'flex':'hidden'} lg:flex w-full lg:w-64 flex-shrink-0 flex-col overflow-hidden`}
+          style={{background:'rgba(0,0,0,0.55)',backdropFilter:'blur(16px)',borderRight:'1px solid rgba(255,255,255,0.07)'}}>
 
-        {/* Role Card */}
-        {hp && (
-          <div className="mx-4 mt-4 p-4 rounded-2xl relative overflow-hidden"
-            style={{background:`linear-gradient(135deg,${RC[hr]}22,${RC[hr]}08)`,border:`1px solid ${RC[hr]}44`}}>
-            <div className="absolute -right-4 -top-4 text-6xl opacity-10">{ROLE_ICONS[hr]}</div>
-            <div className="text-[10px] uppercase tracking-widest opacity-40 mb-2">你的身份</div>
+          {/* Logo */}
+          <div className="px-5 pt-5 pb-4 border-b flex-shrink-0" style={{borderColor:'rgba(255,255,255,0.07)'}}>
             <div className="flex items-center gap-3">
-              <span className="text-2xl">{ROLE_ICONS[hr]}</span>
+              <div className="text-3xl">🐺</div>
               <div>
-                <div className="font-bold text-lg leading-tight" style={{color:RC[hr]}}>{ROLE_LABELS[hr]}</div>
-                <div className="text-[10px] opacity-40">{getSide(hr)===Side.GOOD?'好人阵营':'狼人阵营'}</div>
+                <div className="font-black tracking-[0.25em] text-base" style={{color:'#e8c97a'}}>狼 人 杀</div>
+                <div className="text-[10px] tracking-widest opacity-30 uppercase">AI Battle · Day {day}</div>
               </div>
             </div>
-            {hr===Role.WEREWOLF&&(
-              <div className="mt-3 pt-3 border-t text-xs" style={{borderColor:`${RC[hr]}30`}}>
-                <span className="opacity-40">队友：</span>
-                <span style={{color:RC[hr]}}>
-                  {gs.players.filter(p=>p.role===Role.WEREWOLF&&p.id!==1&&p.isAlive).map(p=>`${p.id}号`).join('、')||'无'}
+          </div>
+
+          {/* Role Card */}
+          {hp && (
+            <div className="mx-4 mt-4 p-4 rounded-2xl relative overflow-hidden flex-shrink-0"
+              style={{background:`linear-gradient(135deg,${RC[hr]}22,${RC[hr]}08)`,border:`1px solid ${RC[hr]}44`}}>
+              <div className="absolute -right-4 -top-4 text-6xl opacity-10">{ROLE_ICONS[hr]}</div>
+              <div className="text-[10px] uppercase tracking-widest opacity-40 mb-2">你的身份</div>
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">{ROLE_ICONS[hr]}</span>
+                <div>
+                  <div className="font-bold text-lg leading-tight" style={{color:RC[hr]}}>{ROLE_LABELS[hr]}</div>
+                  <div className="text-[10px] opacity-40">{getSide(hr)===Side.GOOD?'好人阵营':'狼人阵营'}</div>
+                </div>
+              </div>
+              {hr===Role.WEREWOLF&&(
+                <div className="mt-3 pt-3 border-t text-xs" style={{borderColor:`${RC[hr]}30`}}>
+                  <span className="opacity-40">队友：</span>
+                  <span style={{color:RC[hr]}}>{gs.players.filter(p=>p.role===Role.WEREWOLF&&p.id!==1&&p.isAlive).map(p=>`${p.id}号`).join('、')||'无'}</span>
+                </div>
+              )}
+              {hr===Role.SEER&&gs.seerRecords.length>0&&(
+                <div className="mt-3 pt-3 border-t space-y-1" style={{borderColor:`${RC[hr]}30`}}>
+                  <div className="text-[10px] opacity-40 uppercase tracking-widest">查验记录</div>
+                  {gs.seerRecords.map((r,i)=>(
+                    <div key={i} className="flex justify-between text-xs font-mono">
+                      <span className="opacity-60">{r.targetId}号</span>
+                      <span style={{color:r.side===Side.GOOD?'#52e090':'#e05252'}}>{r.side===Side.GOOD?'✅ 好人':'❌ 狼人'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {hr===Role.WITCH&&(
+                <div className="mt-3 pt-3 border-t flex gap-4 text-xs" style={{borderColor:`${RC[hr]}30`}}>
+                  <span style={{color:gs.witchStatus.hasSavePotion?'#52e090':'#555'}}>💊 解药{gs.witchStatus.hasSavePotion?'':'(已用)'}</span>
+                  <span style={{color:gs.witchStatus.hasPoisonPotion?'#e05252':'#555'}}>🧪 毒药{gs.witchStatus.hasPoisonPotion?'':'(已用)'}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Players */}
+          <div className="flex-1 overflow-y-auto px-4 mt-4 pb-20 lg:pb-4 space-y-1.5">
+            <div className="text-[10px] uppercase tracking-widest opacity-30 mb-2">玩家列表</div>
+            {gs.players.map(p=>(
+              <div key={p.id} className="flex items-center gap-2.5 px-3 py-2 rounded-xl"
+                style={{background:p.isAlive?'rgba(255,255,255,0.04)':'rgba(0,0,0,0.3)',border:p.id===1?`1px solid ${RC[hr]}40`:'1px solid rgba(255,255,255,0.05)',opacity:p.isAlive?1:0.4}}>
+                <span className="text-[10px] font-mono opacity-20 w-4 text-right">{p.id}</span>
+                <span className="text-base">{p.isAlive?'❓':ROLE_ICONS[p.role]}</span>
+                <span className="text-xs flex-1 truncate" style={{color:p.id===1?RC[hr]:'#ccc',textDecoration:p.isAlive?'none':'line-through'}}>
+                  {p.id===1?'你':p.name}
                 </span>
+                {p.id===gs.sheriffId&&p.isAlive&&<Crown className="w-3 h-3 flex-shrink-0" style={{color:'#fbbf24'}}/>}
+                {!p.isAlive&&<Skull className="w-3 h-3 opacity-20 flex-shrink-0"/>}
+                {p.id===gs.idiotRevealedId&&<span className="text-[10px]">🃏</span>}
               </div>
-            )}
-            {hr===Role.SEER&&gs.seerRecords.length>0&&(
-              <div className="mt-3 pt-3 border-t space-y-1" style={{borderColor:`${RC[hr]}30`}}>
-                <div className="text-[10px] opacity-40 uppercase tracking-widest">查验记录</div>
-                {gs.seerRecords.map((r,i)=>(
-                  <div key={i} className="flex justify-between text-xs font-mono">
-                    <span className="opacity-60">{r.targetId}号</span>
-                    <span style={{color:r.side===Side.GOOD?'#52e090':'#e05252'}}>{r.side===Side.GOOD?'✅ 好人':'❌ 狼人'}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-            {hr===Role.WITCH&&(
-              <div className="mt-3 pt-3 border-t flex gap-4 text-xs" style={{borderColor:`${RC[hr]}30`}}>
-                <span style={{color:gs.witchStatus.hasSavePotion?'#52e090':'#555'}}>💊 解药{gs.witchStatus.hasSavePotion?'':'(已用)'}</span>
-                <span style={{color:gs.witchStatus.hasPoisonPotion?'#e05252':'#555'}}>🧪 毒药{gs.witchStatus.hasPoisonPotion?'':'(已用)'}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Players */}
-        <div className="flex-1 overflow-y-auto px-4 mt-4 pb-4 space-y-1.5">
-          <div className="text-[10px] uppercase tracking-widest opacity-30 mb-2">玩家列表</div>
-          {gs.players.map(p=>(
-            <div key={p.id} className="flex items-center gap-2.5 px-3 py-2 rounded-xl transition-all"
-              style={{
-                background:p.isAlive?'rgba(255,255,255,0.04)':'rgba(0,0,0,0.3)',
-                border:p.id===1?`1px solid ${RC[hr]}40`:'1px solid rgba(255,255,255,0.05)',
-                opacity:p.isAlive?1:0.4,
-              }}>
-              <span className="text-[10px] font-mono opacity-20 w-4 text-right">{p.id}</span>
-              <span className="text-base">{p.isAlive?'❓':ROLE_ICONS[p.role]}</span>
-              <span className="text-xs flex-1 truncate" style={{color:p.id===1?RC[hr]:'#ccc',textDecoration:p.isAlive?'none':'line-through'}}>
-                {p.id===1?'你':p.name}
-              </span>
-              {p.id===gs.sheriffId&&p.isAlive&&<Crown className="w-3 h-3 flex-shrink-0" style={{color:'#fbbf24'}}/>}
-              {!p.isAlive&&<Skull className="w-3 h-3 opacity-20 flex-shrink-0"/>}
-              {p.id===gs.idiotRevealedId&&<span className="text-[10px]">🃏</span>}
-            </div>
-          ))}
-        </div>
-      </aside>
-
-      {/* ════ MAIN ════ */}
-      <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
-
-        {/* Header */}
-        <header className="flex-shrink-0 px-5 py-3 flex items-center justify-between"
-          style={{background:'rgba(0,0,0,0.4)',backdropFilter:'blur(12px)',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{background:isNight?'rgba(139,92,246,0.2)':'rgba(251,191,36,0.2)',border:isNight?'1px solid rgba(139,92,246,0.4)':'1px solid rgba(251,191,36,0.4)'}}>
-              {isNight?<Moon className="w-4 h-4" style={{color:'#a78bfa'}}/>:<Sun className="w-4 h-4" style={{color:'#fbbf24'}}/>}
-            </div>
-            <div>
-              <div className="text-[10px] opacity-30 uppercase tracking-widest">第 {day} 天</div>
-              <div className="text-sm font-bold" style={{color:'#e8c97a'}}>{phaseLabel[phase]||phase}</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {busy&&(
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] uppercase tracking-widest font-bold"
-                style={{background:'rgba(251,191,36,0.1)',color:'#fbbf24',border:'1px solid rgba(251,191,36,0.2)'}}>
-                <motion.div className="w-1.5 h-1.5 rounded-full bg-yellow-400"
-                  animate={{opacity:[1,0.3,1]}} transition={{duration:1,repeat:Infinity}}/>
-                AI 思考中
-              </div>
-            )}
-            <button onClick={()=>{setGs(INITIAL);setSheriffElectDone(false);}}
-              className="p-2 rounded-lg transition-opacity hover:opacity-80"
-              style={{background:'rgba(255,255,255,0.05)',opacity:0.4}}>
-              <RotateCcw className="w-3.5 h-3.5"/>
-            </button>
-          </div>
-        </header>
-
-        {/* Log */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-2">
-          <AnimatePresence initial={false}>
-            {gs.logs.map(l=>(
-              <motion.div key={l.id} initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} className="flex gap-3 items-start">
-                <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 text-xs"
-                  style={{
-                    background:l.type==='wolf'?'rgba(224,82,82,0.15)':l.type==='seer'?'rgba(167,139,250,0.15)':l.type==='witch'?'rgba(52,211,153,0.15)':l.type==='discussion'?'rgba(255,255,255,0.06)':l.type==='vote'?'rgba(251,191,36,0.12)':'rgba(255,255,255,0.06)',
-                    color:l.type==='wolf'?'#e05252':l.type==='seer'?'#a78bfa':l.type==='witch'?'#34d399':l.type==='vote'?'#fbbf24':'#888',
-                  }}>
-                  {l.type==='wolf'?'🐺':l.type==='seer'?'🔮':l.type==='witch'?'🧙':l.type==='guard'?'🛡':l.type==='hunter'?'🏹':l.type==='vote'?'⚖':l.type==='discussion'?'💬':'📜'}
-                </div>
-                <div className="flex-1 min-w-0">
-                  {l.playerName&&<span className="text-[10px] font-bold uppercase tracking-widest mr-2" style={{color:'#e8c97a',opacity:0.7}}>{l.playerName}</span>}
-                  <span className={`text-sm leading-relaxed ${l.type==='discussion'?'italic':''}`}
-                    style={{color:l.type==='discussion'?'#e8d5b0':'rgba(255,255,255,0.55)'}}>
-                    {l.message}
-                  </span>
-                </div>
-              </motion.div>
             ))}
-          </AnimatePresence>
-          <div ref={logEnd}/>
-        </div>
+          </div>
+        </aside>
 
-        {/* Action Panel */}
-        <div className="flex-shrink-0 px-5 py-4 min-h-28 flex items-center justify-center relative"
-          style={{background:'rgba(0,0,0,0.5)',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
-          <AnimatePresence mode="wait">
-            <motion.div key={phase+gs.currentDiscussionIndex} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0}} className="w-full max-w-2xl">
+        {/* MAIN — hidden on mobile unless game tab active */}
+        <main className={`${mobileTab==='game'?'flex':'hidden'} lg:flex flex-1 flex-col min-h-0 overflow-hidden`}>
 
-                {/* Guard */}
+          {/* Header */}
+          <header className="flex-shrink-0 px-4 py-3 flex items-center justify-between"
+            style={{background:'rgba(0,0,0,0.4)',backdropFilter:'blur(12px)',borderBottom:'1px solid rgba(255,255,255,0.06)'}}>
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center"
+                style={{background:isNight?'rgba(139,92,246,0.2)':'rgba(251,191,36,0.2)',border:isNight?'1px solid rgba(139,92,246,0.4)':'1px solid rgba(251,191,36,0.4)'}}>
+                {isNight?<Moon className="w-4 h-4" style={{color:'#a78bfa'}}/>:<Sun className="w-4 h-4" style={{color:'#fbbf24'}}/>}
+              </div>
+              <div>
+                <div className="text-[10px] opacity-30 uppercase tracking-widest">第 {day} 天</div>
+                <div className="text-sm font-bold" style={{color:'#e8c97a'}}>{phaseLabel[phase]||phase}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {/* Role badge on mobile */}
+              <div className="lg:hidden px-2 py-1 rounded-lg text-xs font-bold"
+                style={{background:`${RC[hr]}20`,border:`1px solid ${RC[hr]}40`,color:RC[hr]}}>
+                {ROLE_ICONS[hr]} {ROLE_LABELS[hr]}
+              </div>
+              {busy&&(
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px]"
+                  style={{background:'rgba(251,191,36,0.1)',color:'#fbbf24',border:'1px solid rgba(251,191,36,0.2)'}}>
+                  <motion.div className="w-1.5 h-1.5 rounded-full bg-yellow-400" animate={{opacity:[1,0.3,1]}} transition={{duration:1,repeat:Infinity}}/>
+                  思考中
+                </div>
+              )}
+              <button onClick={()=>{setGs(INITIAL);setSheriffElectDone(false);}} className="p-2 rounded-lg opacity-40 hover:opacity-80" style={{background:'rgba(255,255,255,0.05)'}}>
+                <RotateCcw className="w-3.5 h-3.5"/>
+              </button>
+            </div>
+          </header>
+
+          {/* Log */}
+          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2 pb-4">
+            <AnimatePresence initial={false}>
+              {gs.logs.map(l=>(
+                <motion.div key={l.id} initial={{opacity:0,y:6}} animate={{opacity:1,y:0}} className="flex gap-3 items-start">
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 text-xs"
+                    style={{background:l.type==='wolf'?'rgba(224,82,82,0.15)':l.type==='seer'?'rgba(167,139,250,0.15)':l.type==='witch'?'rgba(52,211,153,0.15)':l.type==='discussion'?'rgba(255,255,255,0.06)':l.type==='vote'?'rgba(251,191,36,0.12)':'rgba(255,255,255,0.06)',color:l.type==='wolf'?'#e05252':l.type==='seer'?'#a78bfa':l.type==='witch'?'#34d399':l.type==='vote'?'#fbbf24':'#888'}}>
+                    {l.type==='wolf'?'🐺':l.type==='seer'?'🔮':l.type==='witch'?'🧙':l.type==='guard'?'🛡':l.type==='hunter'?'🏹':l.type==='vote'?'⚖':l.type==='discussion'?'💬':'📜'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    {l.playerName&&<span className="text-[10px] font-bold uppercase tracking-widest mr-2" style={{color:'#e8c97a',opacity:0.7}}>{l.playerName}</span>}
+                    <span className={`text-sm leading-relaxed ${l.type==='discussion'?'italic':''}`} style={{color:l.type==='discussion'?'#e8d5b0':'rgba(255,255,255,0.55)'}}>
+                      {l.message}
+                    </span>
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+            <div ref={logEnd}/>
+          </div>
+
+          {/* Action Panel */}
+          <div className="flex-shrink-0 px-4 py-4 min-h-28 flex items-center justify-center relative"
+            style={{background:'rgba(0,0,0,0.5)',borderTop:'1px solid rgba(255,255,255,0.06)'}}>
+            <AnimatePresence mode="wait">
+              <motion.div key={phase+gs.currentDiscussionIndex} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0}} className="w-full max-w-2xl">
+
                 {phase===Phase.NIGHT_GUARD&&hr===Role.GUARD&&(
                   <Panel label="守卫：选择守护目标" color={RC[Role.GUARD]}>
                     <Btns>{alive.filter(p=>p.id!==gs.lastGuardTargetId).map(p=><Btn key={p.id} color={RC[Role.GUARD]} onClick={()=>hGuard(p.id)}>{p.id}号</Btn>)}<Btn color="#555" onClick={()=>hGuard(null)}>空守</Btn></Btns>
                   </Panel>
                 )}
-
-                {/* Wolf */}
                 {phase===Phase.NIGHT_WOLVES&&hr===Role.WEREWOLF&&(
                   <Panel label="狼人：选择今晚击杀目标" color={RC[Role.WEREWOLF]}>
-                    <div className="text-center text-xs mb-3 px-3 py-2 rounded-lg"
-                      style={{background:'rgba(224,82,82,0.1)',border:'1px solid rgba(224,82,82,0.25)'}}>
+                    <div className="text-center text-xs mb-3 px-3 py-2 rounded-lg" style={{background:'rgba(224,82,82,0.1)',border:'1px solid rgba(224,82,82,0.25)'}}>
                       <span className="opacity-50">🐺 队友：</span>
-                      <span className="font-bold ml-1" style={{color:'#e05252'}}>
-                        {gs.players.filter(p=>p.role===Role.WEREWOLF&&p.id!==1&&p.isAlive).map(p=>`${p.id}号`).join('、')||'无存活队友'}
-                      </span>
+                      <span className="font-bold ml-1" style={{color:'#e05252'}}>{gs.players.filter(p=>p.role===Role.WEREWOLF&&p.id!==1&&p.isAlive).map(p=>`${p.id}号`).join('、')||'无'}</span>
                       <div className="text-[10px] opacity-30 mt-0.5">所有狼人各自投票，票数最多者被刀</div>
                     </div>
                     <Btns>{alive.filter(p=>p.role!==Role.WEREWOLF).map(p=><Btn key={p.id} color={RC[Role.WEREWOLF]} onClick={()=>hKillVote(p.id)}>{p.id}号</Btn>)}</Btns>
                   </Panel>
                 )}
-
-                {/* Seer */}
                 {phase===Phase.NIGHT_SEER&&hr===Role.SEER&&(
                   <Panel label="预言家：选择查验目标" color={RC[Role.SEER]}>
                     <Btns>{alive.filter(p=>!p.isHuman&&!gs.seerRecords.find(r=>r.targetId===p.id)).map(p=><Btn key={p.id} color={RC[Role.SEER]} onClick={()=>hCheck(p.id)}>{p.id}号</Btn>)}</Btns>
                   </Panel>
                 )}
-
-                {/* Witch */}
                 {phase===Phase.NIGHT_WITCH&&hr===Role.WITCH&&(
                   <Panel label="女巫：使用你的药" color={RC[Role.WITCH]}>
                     <Btns>
@@ -635,23 +633,15 @@ export default function App() {
                     </Btns>
                   </Panel>
                 )}
-
-                {/* Night waiting */}
                 {!phase.startsWith('SHERIFF')&&((phase===Phase.NIGHT_WOLVES&&hr!==Role.WEREWOLF)||(phase===Phase.NIGHT_SEER&&hr!==Role.SEER)||(phase===Phase.NIGHT_WITCH&&hr!==Role.WITCH)||(phase===Phase.NIGHT_GUARD&&hr!==Role.GUARD))&&(
                   <p className="text-center opacity-25 text-sm italic">黑夜漫漫，请闭眼...</p>
                 )}
-
-                {/* Night Result */}
                 {phase===Phase.NIGHT_RESULT&&!gs.hunterMustShoot&&<CenterBtn onClick={()=>advance()}>确认，天亮了</CenterBtn>}
-
-                {/* Hunter */}
                 {gs.hunterMustShoot&&ha&&(
                   <Panel label="猎人！死前可开枪带走一人" color={RC[Role.HUNTER]}>
                     <Btns>{alive.filter(p=>!p.isHuman).map(p=><Btn key={p.id} color={RC[Role.HUNTER]} onClick={()=>hHunter(p.id)}>{p.id}号</Btn>)}<Btn color="#555" onClick={()=>hHunter(null)}>放弃开枪</Btn></Btns>
                   </Panel>
                 )}
-
-                {/* Sheriff Elect */}
                 {phase===Phase.SHERIFF_ELECT&&(
                   <Panel label="警长竞选：你要上警吗？" color="#fbbf24">
                     <div className="text-xs text-center mb-3 opacity-50">
@@ -663,19 +653,12 @@ export default function App() {
                     </Btns>
                   </Panel>
                 )}
-
-                {/* Sheriff Speech */}
                 {phase===Phase.SHERIFF_SPEECH&&gs.currentDiscussionIndex===1&&(
                   <SpeechBox value={speech} onChange={setSpeech} onSubmit={submitSpeech} placeholder="输入竞选发言..."/>
                 )}
                 {phase===Phase.SHERIFF_SPEECH&&gs.currentDiscussionIndex>1&&(
                   <p className="text-center opacity-40 text-sm italic">{gs.currentDiscussionIndex}号正在竞选发言...</p>
                 )}
-                {phase===Phase.SHERIFF_SPEECH&&gs.currentDiscussionIndex===0&&(
-                  <p className="text-center opacity-25 text-sm italic">等待竞选发言开始...</p>
-                )}
-
-                {/* Sheriff Vote */}
                 {phase===Phase.SHERIFF_VOTE&&(
                   <Panel label="投票选出警长" color="#fbbf24">
                     <Btns>
@@ -684,11 +667,7 @@ export default function App() {
                     </Btns>
                   </Panel>
                 )}
-
-                {/* Sheriff Result */}
                 {phase===Phase.SHERIFF_RESULT&&<CenterBtn onClick={()=>advance()}>确认结果</CenterBtn>}
-
-                {/* Sheriff Handoff */}
                 {phase===Phase.SHERIFF_ACTION&&gs.players.find(p=>p.id===gs.sheriffId)?.isHuman&&(
                   <Panel label="你出局了，移交或撕毁警徽" color="#fbbf24">
                     <Btns>
@@ -697,8 +676,6 @@ export default function App() {
                     </Btns>
                   </Panel>
                 )}
-
-                {/* Discussion */}
                 {phase===Phase.DAY_DISCUSSION&&gs.currentDiscussionIndex===-1&&(
                   <div className="flex flex-col items-center gap-3">
                     {gs.sheriffId===1?(
@@ -715,60 +692,62 @@ export default function App() {
                 {phase===Phase.DAY_DISCUSSION&&gs.currentDiscussionIndex>1&&(
                   <p className="text-center opacity-40 text-sm italic">{gs.currentDiscussionIndex}号玩家正在发言...</p>
                 )}
-
-                {/* Day Vote */}
                 {phase===Phase.DAY_VOTING&&!humanVoted&&(
-                  <Panel label={`投票放逐${gs.sheriffId?` · 警长${gs.sheriffId}号拥有1.5票`:''}`} color={RC[Role.WEREWOLF]}>
+                  <Panel label={`投票放逐${gs.sheriffId?` · 警长${gs.sheriffId}号1.5票`:''}`} color={RC[Role.WEREWOLF]}>
                     <Btns>
                       {alive.filter(p=>!p.isHuman&&gs.idiotRevealedId!==p.id).map(p=><Btn key={p.id} color={RC[Role.WEREWOLF]} onClick={()=>humanVote(p.id)}>投{p.id}号</Btn>)}
                       <Btn color="#555" onClick={()=>humanVote(null)}>弃权</Btn>
                     </Btns>
                   </Panel>
                 )}
-                {phase===Phase.DAY_VOTING&&humanVoted&&<p className="text-center opacity-25 text-sm italic">正在统计AI投票...</p>}
-
-                {/* Day Result */}
+                {phase===Phase.DAY_VOTING&&humanVoted&&<p className="text-center opacity-25 text-sm italic">统计投票中...</p>}
                 {phase===Phase.DAY_RESULT&&!gs.hunterMustShoot&&<CenterBtn onClick={()=>advance()}>进入夜晚</CenterBtn>}
-
-                {/* Game Over */}
                 {phase===Phase.GAME_OVER&&(
                   <div className="text-center space-y-4 py-2">
                     <div className="text-5xl">{gs.winner===Side.GOOD?'🎉':'🐺'}</div>
-                    <div className="text-2xl font-black tracking-wider" style={{color:'#e8c97a'}}>
-                      {gs.winner===Side.GOOD?'好人阵营胜利！':'狼人阵营胜利！'}
-                    </div>
+                    <div className="text-2xl font-black tracking-wider" style={{color:'#e8c97a'}}>{gs.winner===Side.GOOD?'好人阵营胜利！':'狼人阵营胜利！'}</div>
                     <div className="flex flex-wrap gap-1.5 justify-center">
                       {gs.players.map(p=>(
-                        <span key={p.id} className="px-2 py-1 rounded-lg text-xs"
-                          style={{background:`${RC[p.role]}18`,border:`1px solid ${RC[p.role]}30`,color:RC[p.role]}}>
+                        <span key={p.id} className="px-2 py-1 rounded-lg text-xs" style={{background:`${RC[p.role]}18`,border:`1px solid ${RC[p.role]}30`,color:RC[p.role]}}>
                           {p.id}号 {ROLE_ICONS[p.role]} {ROLE_LABELS[p.role]}
                         </span>
                       ))}
                     </div>
-                    <button onClick={()=>{setGs(INITIAL);setSheriffElectDone(false);}}
-                      className="px-8 py-3 rounded-xl font-black text-sm transition-all hover:scale-105"
-                      style={{background:'#e8c97a',color:'#1a0a00'}}>
-                      再来一局
-                    </button>
+                    <button onClick={()=>{setGs(INITIAL);setSheriffElectDone(false);}} className="px-8 py-3 rounded-xl font-black text-sm transition-all hover:scale-105" style={{background:'#e8c97a',color:'#1a0a00'}}>再来一局</button>
                   </div>
                 )}
+              </motion.div>
+            </AnimatePresence>
+            {busy&&(
+              <div className="absolute bottom-2 right-4 flex items-center gap-1.5">
+                {[0,1,2].map(i=>(
+                  <motion.div key={i} className="w-1.5 h-1.5 rounded-full" style={{background:'#e8c97a'}}
+                    animate={{opacity:[0.2,1,0.2]}} transition={{duration:1,repeat:Infinity,delay:i*0.25}}/>
+                ))}
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
 
-            </motion.div>
-          </AnimatePresence>
-          {/* AI thinking indicator - shown on top, doesn't block buttons */}
-          {busy&&(
-            <div className="absolute bottom-2 right-4 flex items-center gap-1.5">
-              {[0,1,2].map(i=>(
-                <motion.div key={i} className="w-1.5 h-1.5 rounded-full" style={{background:'#e8c97a'}}
-                  animate={{opacity:[0.2,1,0.2]}} transition={{duration:1,repeat:Infinity,delay:i*0.25}}/>
-              ))}
-              <span className="text-[10px] opacity-40 ml-1">AI思考中</span>
-            </div>
-          )}
-        </div>
-      </main>
+      {/* ════ MOBILE BOTTOM TAB BAR ════ */}
+      <div className="lg:hidden flex-shrink-0 flex border-t"
+        style={{background:'rgba(0,0,0,0.8)',backdropFilter:'blur(16px)',borderColor:'rgba(255,255,255,0.08)'}}>
+        <button onClick={()=>setMobileTab('game')}
+          className="flex-1 py-3 flex flex-col items-center gap-1 transition-all"
+          style={{color:mobileTab==='game'?'#e8c97a':'rgba(255,255,255,0.3)'}}>
+          <span className="text-lg">🎮</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider">游戏</span>
+        </button>
+        <button onClick={()=>setMobileTab('players')}
+          className="flex-1 py-3 flex flex-col items-center gap-1 transition-all relative"
+          style={{color:mobileTab==='players'?'#e8c97a':'rgba(255,255,255,0.3)'}}>
+          <span className="text-lg">👥</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider">玩家</span>
+        </button>
+      </div>
+
     </div>
-  );
 }
 
 // ── Mini Components ────────────────────────────────────────────────────────────
