@@ -1,9 +1,12 @@
-import { GoogleGenAI, Type } from "@google/genai";
+import OpenAI from "openai";
 import { Player, Role, Phase, GameState, Side, SeerRecord } from "../types";
 import { SYSTEM_PROMPT, ROLE_LABELS } from "../constants";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
-const MODEL = "gemini-2.0-flash";
+const ai = new OpenAI({
+  apiKey: import.meta.env.VITE_DEEPSEEK_API_KEY || "",
+  baseURL: "https://api.deepseek.com",
+});
+const MODEL = "deepseek-v4-flash";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -82,12 +85,14 @@ ${roleInstruction}
 请以${player.id}号玩家身份发言，50-80字，逻辑清晰。直接输出发言内容，不要加引号或前缀。`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await ai.chat.completions.create({
       model: MODEL,
-      contents: prompt,
-      config: { systemInstruction: SYSTEM_PROMPT },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ]
     });
-    return (response.text || "").trim() || "我还在观察，暂时保留意见。";
+    return (response.choices[0].message.content || "").trim() || "我还在观察，暂时保留意见。";
   } catch (error) {
     console.error("generateAIDiscussion Error:", error);
     const fallbacks: Record<Role, string[]> = {
@@ -128,24 +133,16 @@ ${instruction}
 只返回JSON，格式：{"voteId": 数字或-1, "reason": "理由"}`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await ai.chat.completions.create({
       model: MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            voteId: { type: Type.INTEGER },
-            reason: { type: Type.STRING },
-          },
-          required: ["voteId", "reason"],
-        },
-      },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
     });
     const result = safeParseJSON<{ voteId: number; reason: string }>(
-      response.text || "", { voteId: -1, reason: "信息不足，选择弃权。" }
+      response.choices[0].message.content || "", { voteId: -1, reason: "信息不足，选择弃权。" }
     );
     if (result.voteId === -1 || !candidates.includes(result.voteId)) {
       return { voteId: null, reason: result.reason || "弃权。" };
@@ -181,20 +178,15 @@ export async function generateAIWolfKill(
 只返回JSON：{"targetId": 数字}`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await ai.chat.completions.create({
       model: MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: { targetId: { type: Type.INTEGER } },
-          required: ["targetId"],
-        },
-      },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
     });
-    const result = safeParseJSON<{ targetId: number }>(response.text || "", { targetId: -1 });
+    const result = safeParseJSON<{ targetId: number }>(response.choices[0].message.content || "", { targetId: -1 });
     const valid = targets.find(p => p.id === result.targetId);
     return valid ? result.targetId : targets[Math.floor(Math.random() * targets.length)]?.id ?? null;
   } catch (error) {
@@ -225,20 +217,15 @@ export async function generateAISeerCheck(
 只返回JSON：{"targetId": 数字}`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await ai.chat.completions.create({
       model: MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: { targetId: { type: Type.INTEGER } },
-          required: ["targetId"],
-        },
-      },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
     });
-    const result = safeParseJSON<{ targetId: number }>(response.text || "", { targetId: -1 });
+    const result = safeParseJSON<{ targetId: number }>(response.choices[0].message.content || "", { targetId: -1 });
     return targets.find(p => p.id === result.targetId) ? result.targetId : targets[0].id;
   } catch (error) {
     console.error("generateAISeerCheck Error:", error);
@@ -276,24 +263,16 @@ export async function generateAIWitchAction(
 {"action": "save或poison或skip", "targetId": 毒药目标的id（save或skip时可省略）}`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await ai.chat.completions.create({
       model: MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            action: { type: Type.STRING },
-            targetId: { type: Type.INTEGER },
-          },
-          required: ["action"],
-        },
-      },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
     });
     const result = safeParseJSON<{ action: string; targetId?: number }>(
-      response.text || "", { action: "skip" }
+      response.choices[0].message.content || "", { action: "skip" }
     );
 
     if (result.action === "save" && hasSavePotion && killedId) {
@@ -333,20 +312,15 @@ export async function generateAIGuardAction(
 只返回JSON：{"targetId": 数字（空守返回-1）}`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await ai.chat.completions.create({
       model: MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: { targetId: { type: Type.INTEGER } },
-          required: ["targetId"],
-        },
-      },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
     });
-    const result = safeParseJSON<{ targetId: number }>(response.text || "", { targetId: -1 });
+    const result = safeParseJSON<{ targetId: number }>(response.choices[0].message.content || "", { targetId: -1 });
     if (result.targetId === -1) return null;
     const valid = targets.find(p => p.id === result.targetId);
     return valid ? result.targetId : null;
@@ -378,20 +352,15 @@ export async function generateAIHunterShoot(
 只返回JSON：{"targetId": 数字}`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await ai.chat.completions.create({
       model: MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: { targetId: { type: Type.INTEGER } },
-          required: ["targetId"],
-        },
-      },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
     });
-    const result = safeParseJSON<{ targetId: number }>(response.text || "", { targetId: -1 });
+    const result = safeParseJSON<{ targetId: number }>(response.choices[0].message.content || "", { targetId: -1 });
     return targets.find(p => p.id === result.targetId) ? result.targetId : targets[0].id;
   } catch (error) {
     console.error("generateAIHunterShoot Error:", error);
@@ -428,20 +397,15 @@ export async function generateAISheriffChoice(
 返回JSON：{"run": true或false}`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await ai.chat.completions.create({
       model: MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: { run: { type: Type.BOOLEAN } },
-          required: ["run"],
-        },
-      },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
     });
-    const result = safeParseJSON<{ run: boolean }>(response.text || "", { run: false });
+    const result = safeParseJSON<{ run: boolean }>(response.choices[0].message.content || "", { run: false });
     return result.run;
   } catch (error) {
     console.error("generateAISheriffChoice Error:", error);
@@ -469,20 +433,15 @@ export async function generateAISheriffAction(
 返回JSON：{"targetId": 数字（撕毁返回-1）}`;
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await ai.chat.completions.create({
       model: MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: { targetId: { type: Type.INTEGER } },
-          required: ["targetId"],
-        },
-      },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
     });
-    const result = safeParseJSON<{ targetId: number }>(response.text || "", { targetId: -1 });
+    const result = safeParseJSON<{ targetId: number }>(response.choices[0].message.content || "", { targetId: -1 });
     if (result.targetId === -1) return null;
     return targets.find(p => p.id === result.targetId) ? result.targetId : null;
   } catch (error) {
