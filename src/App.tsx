@@ -578,7 +578,6 @@ export default function App() {
     : (phase === Phase.DAY_VOTING || phase === Phase.DAY_RESULT) ? PHASE_BG.VOTE
     : PHASE_BG.DAY;
 
-  const roleActor = (role: Role) => gs.players.find(p => p.role === role && p.isAlive);
   const iAm = (role: Role) => ha && hr === role;
   const pendingHunterIsHuman = gs.hunterPendingId === HUMAN_ID;
   const sheriffIsHuman = gs.sheriffId === HUMAN_ID;
