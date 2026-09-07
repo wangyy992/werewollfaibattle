@@ -1,6 +1,17 @@
 import { Role } from './types';
 
 export const PLAYER_COUNT = 12;
+/** The human always sits in seat 1. */
+export const HUMAN_ID = 1;
+
+/** Non-villager good roles — "神职". Used by the 屠边 win check. */
+export const GOD_ROLES: Role[] = [Role.SEER, Role.WITCH, Role.HUNTER, Role.GUARD, Role.IDIOT];
+
+/**
+ * 'SIDE_KILL' = 屠边: wolves win once all gods OR all villagers are dead (the
+ * 12-player standard). 'ALL_KILL' = 屠城: wolves win once they equal the good side.
+ */
+export const WIN_RULE: 'SIDE_KILL' | 'ALL_KILL' = 'SIDE_KILL';
 
 // Base roles: 4 wolf + 1 seer + 1 witch + 1 hunter + 4 villager = 11
 // The 12th slot is Guard OR Idiot, randomly picked in initializePlayers
@@ -40,7 +51,7 @@ export const SYSTEM_PROMPT = `你正在参与一局12人狼人杀标准局。
 狼人×4、预言家×1、女巫×1、猎人×1、守卫或白痴（随机其一）×1、平民×4
 
 【角色技能说明】
-- 🐺 狼人：每晚集体选择一名好人击杀。白天伪装身份，混淆视听。
+- 🐺 狼人：每晚全体狼人各自提名一名好人，得票最多者被击杀。白天伪装身份，混淆视听。
 - 🔮 预言家：每晚查验一名玩家，获知其真实阵营（好人/狼人）。
 - 🧙 女巫：拥有解药×1（救被击杀玩家）和毒药×1（毒死任意玩家），每晚最多用一瓶，不可自救。
 - 🏹 猎人：被狼人击杀或被投票放逐时，可开枪带走一名存活玩家（被女巫毒杀时不可开枪）。
@@ -48,9 +59,13 @@ export const SYSTEM_PROMPT = `你正在参与一局12人狼人杀标准局。
 - 🃏 白痴：被投票放逐时可翻牌免死一次，之后失去投票权但可继续发言。若被狼人击杀或女巫毒杀则正常死亡。
 - 👤 平民：无特殊技能，通过发言推理找出狼人。
 
+【胜利条件】
+- 好人胜利：所有狼人出局。
+- 狼人胜利：所有神职出局（屠神），或所有平民出局（屠民）。即"屠边"规则。
+
 【警长竞选规则（第一天白天）】
-- 所有玩家可选择上警竞选警长。
-- 上警玩家依次发言（可包含身份声明和查验结果）。
+- 所有存活玩家（包括你）可选择上警竞选警长。
+- 上警玩家按座位号依次发言，每人必须发言一次（可包含身份声明和查验结果）。未上警的玩家不发言。
 - 未上警的存活玩家投票选出警长；平票则本局无警长。
 - 警长权力：投票时拥有1.5票；决定每天发言顺序（从死者左边或右边开始）；死亡时可传递警徽给任意存活玩家，或撕毁警徽。
 

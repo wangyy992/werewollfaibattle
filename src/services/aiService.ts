@@ -2,21 +2,37 @@ import OpenAI from "openai";
 import { Player, Role, Phase, GameState, Side } from "../types";
 import { SYSTEM_PROMPT, ROLE_LABELS } from "../constants";
 
+// ─── Provider config ──────────────────────────────────────────────────────────
+// The key is read from .env.local (see .env.example). Vite exposes it through
+// import.meta.env, and vite.config.ts also accepts the un-prefixed name.
+const API_KEY = import.meta.env.VITE_DEEPSEEK_API_KEY || "";
+const BASE_URL = import.meta.env.VITE_AI_BASE_URL || "https://api.deepseek.com";
+const MODEL = import.meta.env.VITE_AI_MODEL || "deepseek-chat";
+const TIMEOUT_MS = 25_000;
+
+/** False when no key is configured — the UI says so instead of silently
+ *  running every AI on canned fallback lines. */
+export const AI_ENABLED = API_KEY.length > 0;
+
 const ai = new OpenAI({
-  apiKey: import.meta.env.VITE_DEEPSEEK_API_KEY || "",
-  baseURL: "https://api.deepseek.com",
+  apiKey: API_KEY,
+  baseURL: BASE_URL,
   dangerouslyAllowBrowser: true,
 });
-
-const MODEL = "deepseek-v4-flash";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function buildGameContext(player: Player, gameState: GameState): string {
   const alive = gameState.players.filter(p => p.isAlive);
   const dead = gameState.players.filter(p => !p.isAlive);
-  const recentLogs = gameState.logs.slice(-15)
-    .map(l => `[${l.phase}]${l.playerName ? " " + l.playerName + ":" : ""} ${l.message}`)
+
+  // `secret` logs are the human player's own private knowledge (their seer
+  // checks, their wolf team's plan). Feeding them to an AI would hand it the
+  // human's cards, so they never enter the context.
+  const recentLogs = gameState.logs
+    .filter(l => !l.secret)
+    .slice(-25)
+    .map(l => `[第${l.day}天/${l.phase}]${l.playerName ? " " + l.playerName + ":" : ""} ${l.message}`)
     .join("\n");
 
   const wolfInfo = player.role === Role.WEREWOLF
@@ -48,7 +64,7 @@ function buildGameContext(player: Player, gameState: GameState): string {
 你是：${player.id}号（${ROLE_LABELS[player.role]}）
 ${wolfInfo}${seerInfo}${witchInfo}${sheriffInfo}${candidatesInfo}
 存活（${alive.length}人）：${alive.map(p => `${p.id}号${p.id === gameState.sheriffId ? "[警]" : ""}${gameState.idiotRevealedId === p.id ? "[白痴已翻]" : ""}`).join("、")}
-出局（${dead.length}人）：${dead.length > 0 ? dead.map(p => `${p.id}号(${ROLE_LABELS[p.role]},${p.deathReason},第${p.deathDay}天)`).join("、") : "无"}
+出局（${dead.length}人）：${dead.length > 0 ? dead.map(p => `${p.id}号(第${p.deathDay}天${p.deathReason === "投票放逐" ? "被放逐" : p.deathReason === "猎人带走" ? "被猎人带走" : "夜间出局"})`).join("、") : "无"}
 ${nightInfo}
 
 === 近期发言记录 ===
@@ -67,15 +83,25 @@ function safeJSON<T>(text: string | null | undefined, fallback: T): T {
 }
 
 async function callAI(prompt: string, json = false): Promise<string> {
-  const response = await ai.chat.completions.create({
-    model: MODEL,
-    messages: [
-      { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: prompt }
-    ],
-    ...(json ? { response_format: { type: "json_object" as const } } : {}),
-  });
-  return response.choices[0].message.content || "";
+  if (!AI_ENABLED) throw new Error("AI disabled: no API key configured");
+  const response = await ai.chat.completions.create(
+    {
+      model: MODEL,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: prompt }
+      ],
+      ...(json ? { response_format: { type: "json_object" as const } } : {}),
+    },
+    // Without this a stalled request would freeze the whole game loop.
+    { timeout: TIMEOUT_MS }
+  );
+  return response.choices[0]?.message?.content || "";
+}
+
+/** Picks a random element; used by every fallback path so a dead API still plays. */
+function pick<T>(arr: T[]): T | undefined {
+  return arr.length ? arr[Math.floor(Math.random() * arr.length)] : undefined;
 }
 
 // ─── Discussion ───────────────────────────────────────────────────────────────
@@ -123,7 +149,10 @@ ${isSheriffPhase ? "竞选发言时可暗示自己是好人神职，不需要完
 【你的发言策略】
 ${strategies[player.role]}
 
-请以${player.id}号玩家身份发言，50-80字，逻辑清晰，语气自然。
+${isSheriffPhase
+  ? `这是警长竞选发言，你已上警。请直接开始你的竞选发言。`
+  : `请以${player.id}号玩家身份发言。`}
+50-80字，逻辑清晰，语气自然。必须回应前面玩家的发言内容。
 直接输出发言内容，不加引号或任何前缀。`;
 
   try {
@@ -183,14 +212,17 @@ ${instruction}
     const text = await callAI(prompt, true);
     const result = safeJSON<{ voteId: number; reason: string }>(text, { voteId: -1, reason: "弃权。" });
     if (result.voteId === -1 || !candidates.includes(result.voteId)) {
-      return { voteId: null, reason: result.reason };
+      return { voteId: null, reason: result.reason || "弃权。" };
     }
-    return { voteId: result.voteId, reason: result.reason };
+    return { voteId: result.voteId, reason: result.reason || "综合判断。" };
   } catch (error) {
     console.error("generateAIVote Error:", error);
+    const wolfSafe = candidates.filter(
+      id => gameState.players.find(p => p.id === id)?.role !== Role.WEREWOLF
+    );
     const fallback = player.role === Role.WEREWOLF
-      ? candidates.find(id => gameState.players.find(p => p.id === id)?.role !== Role.WEREWOLF)
-      : candidates[Math.floor(Math.random() * candidates.length)];
+      ? pick(wolfSafe) ?? pick(candidates)
+      : pick(candidates);
     return { voteId: fallback ?? null, reason: "综合判断。" };
   }
 }
@@ -215,9 +247,9 @@ export async function generateAIWolfKill(player: Player, gameState: GameState): 
   try {
     const text = await callAI(prompt, true);
     const result = safeJSON<{ targetId: number }>(text, { targetId: -1 });
-    return targets.find(p => p.id === result.targetId) ? result.targetId : targets[Math.floor(Math.random() * targets.length)].id;
+    return targets.some(p => p.id === result.targetId) ? result.targetId : pick(targets)!.id;
   } catch {
-    return targets[Math.floor(Math.random() * targets.length)].id;
+    return pick(targets)!.id;
   }
 }
 
@@ -240,9 +272,9 @@ export async function generateAISeerCheck(player: Player, gameState: GameState):
   try {
     const text = await callAI(prompt, true);
     const result = safeJSON<{ targetId: number }>(text, { targetId: -1 });
-    return targets.find(p => p.id === result.targetId) ? result.targetId : targets[0].id;
+    return targets.some(p => p.id === result.targetId) ? result.targetId : pick(targets)!.id;
   } catch {
-    return targets[0].id;
+    return pick(targets)!.id;
   }
 }
 
@@ -253,13 +285,15 @@ export async function generateAIWitchAction(
   const context = buildGameContext(player, gameState);
   const { hasSavePotion, hasPoisonPotion } = gameState.witchStatus;
   const killedId = gameState.nightKilledId;
+  // 女巫不可自救 — her own name is never a valid save target.
+  const canSave = hasSavePotion && !!killedId && killedId !== player.id;
   const poisonTargets = gameState.players.filter(p => p.isAlive && p.id !== player.id && p.id !== killedId);
 
   const prompt = `${context}
 
 【女巫夜间行动】
 今晚被狼人击杀：${killedId ? `${killedId}号` : "无"}
-解药状态：${hasSavePotion ? "✅有（可用）" : "❌已用完"}
+解药状态：${hasSavePotion ? "✅有（可用）" : "❌已用完"}${hasSavePotion && killedId === player.id ? "（但被刀的是你自己，不可自救）" : ""}
 毒药状态：${hasPoisonPotion ? "✅有（可用）" : "❌已用完"}
 同一晚不能同时使用解药和毒药。
 
@@ -283,17 +317,15 @@ export async function generateAIWitchAction(
     const text = await callAI(prompt, true);
     const result = safeJSON<{ action: string; targetId?: number }>(text, { action: "skip" });
 
-    if (result.action === "save" && hasSavePotion && killedId) {
-      return { action: "save" };
-    }
-    if (result.action === "poison" && hasPoisonPotion && result.targetId) {
-      if (poisonTargets.find(p => p.id === result.targetId)) {
-        return { action: "poison", targetId: result.targetId };
-      }
+    if (result.action === "save" && canSave) return { action: "save" };
+    if (result.action === "poison" && hasPoisonPotion && result.targetId
+        && poisonTargets.some(p => p.id === result.targetId)) {
+      return { action: "poison", targetId: result.targetId };
     }
     return { action: "skip" };
   } catch {
-    return { action: "skip" };
+    // No API: fall back to the standard night-one save.
+    return canSave && gameState.day === 1 ? { action: "save" } : { action: "skip" };
   }
 }
 
@@ -321,15 +353,17 @@ ${gameState.day === 1
     const text = await callAI(prompt, true);
     const result = safeJSON<{ targetId: number }>(text, { targetId: -1 });
     if (result.targetId === -1) return null;
-    return targets.find(p => p.id === result.targetId) ? result.targetId : (gameState.day === 1 ? null : targets[0].id);
+    return targets.some(p => p.id === result.targetId)
+      ? result.targetId
+      : (gameState.day === 1 ? null : pick(targets)!.id);
   } catch {
-    return gameState.day === 1 ? null : targets[0]?.id ?? null;
+    return gameState.day === 1 ? null : pick(targets)?.id ?? null;
   }
 }
 
 export async function generateAIHunterShoot(player: Player, gameState: GameState): Promise<number | null> {
   const context = buildGameContext(player, gameState);
-  const targets = gameState.players.filter(p => p.isAlive);
+  const targets = gameState.players.filter(p => p.isAlive && p.id !== player.id);
   if (targets.length === 0) return null;
 
   const prompt = `${context}
@@ -339,14 +373,15 @@ export async function generateAIHunterShoot(player: Player, gameState: GameState
 开枪优先级：预言家查杀目标 > 发言逻辑最差的 > 与自己对立最深的
 绝对不要打预言家的金水玩家！
 
-只返回JSON：{"targetId": 数字}`;
+只返回JSON：{"targetId": 数字，放弃开枪返回-1}`;
 
   try {
     const text = await callAI(prompt, true);
     const result = safeJSON<{ targetId: number }>(text, { targetId: -1 });
-    return targets.find(p => p.id === result.targetId) ? result.targetId : targets[0].id;
+    if (result.targetId === -1) return null;
+    return targets.some(p => p.id === result.targetId) ? result.targetId : pick(targets)!.id;
   } catch {
-    return targets[0].id;
+    return pick(targets)!.id;
   }
 }
 
@@ -356,31 +391,35 @@ export async function generateAISheriffChoice(player: Player, gameState: GameSta
   // Hard rules (no AI needed)
   if (player.role === Role.SEER) return true;
   if (player.role === Role.WEREWOLF) {
+    // Exactly one wolf runs, as the fake seer.
     const wolfCandidates = gameState.sheriffCandidates.filter(
       id => gameState.players.find(p => p.id === id)?.role === Role.WEREWOLF
     );
-    return wolfCandidates.length === 0; // Only one wolf runs as fake seer
+    return wolfCandidates.length === 0;
   }
 
   const context = buildGameContext(player, gameState);
   const prompt = `${context}
 
 【警长竞选决策】你是${ROLE_LABELS[player.role]}，要不要上警竞选警长？
+上警后你必须公开发言，会吸引狼人注意；不上警则无法争夺警徽。
 考虑：你有重要信息可分享吗？上警会暴露身份吗？局势需要你站出来吗？
 只返回JSON：{"run": true或false}`;
 
   try {
     const text = await callAI(prompt, true);
-    const result = safeJSON<{ run: boolean }>(text, { run: false });
-    return result.run;
+    return safeJSON<{ run: boolean }>(text, { run: false }).run === true;
   } catch {
-    return player.role === Role.SEER;
+    // No API: villagers and gods run about a third of the time so the
+    // election is never empty.
+    return Math.random() < 0.35;
   }
 }
 
 export async function generateAISheriffAction(player: Player, gameState: GameState): Promise<number | null> {
   const context = buildGameContext(player, gameState);
   const targets = gameState.players.filter(p => p.isAlive && p.id !== player.id);
+  if (targets.length === 0) return null;
 
   const prompt = `${context}
 
@@ -396,24 +435,8 @@ ${player.role === Role.WEREWOLF
     const text = await callAI(prompt, true);
     const result = safeJSON<{ targetId: number }>(text, { targetId: -1 });
     if (result.targetId === -1) return null;
-    return targets.find(p => p.id === result.targetId) ? result.targetId : null;
+    return targets.some(p => p.id === result.targetId) ? result.targetId : null;
   } catch {
     return null;
-  }
-}
-
-// ─── Legacy wrapper (App.tsx compatibility) ───────────────────────────────────
-
-export async function generateAINightAction(
-  player: Player,
-  gameState: GameState,
-  actionType: 'KILL' | 'CHECK' | 'WITCH_ACTION' | 'HUNTER_SHOOT'
-): Promise<number | null | { action: 'save' | 'poison' | 'skip'; targetId?: number }> {
-  switch (actionType) {
-    case 'KILL': return generateAIWolfKill(player, gameState);
-    case 'CHECK': return generateAISeerCheck(player, gameState);
-    case 'WITCH_ACTION': return generateAIWitchAction(player, gameState);
-    case 'HUNTER_SHOOT': return generateAIHunterShoot(player, gameState);
-    default: return null;
   }
 }
