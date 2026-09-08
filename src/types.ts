@@ -27,9 +27,17 @@ export enum Phase {
   DAY_DISCUSSION = 'DAY_DISCUSSION',
   DAY_VOTING = 'DAY_VOTING',
   DAY_RESULT = 'DAY_RESULT',
+  // Interrupt phases: entered when a death triggers a pending ability,
+  // then control returns to `resumePhase`.
   SHERIFF_ACTION = 'SHERIFF_ACTION',
+  HUNTER_SHOOT = 'HUNTER_SHOOT',
   GAME_OVER = 'GAME_OVER'
 }
+
+export type DeathReason = '狼人猎杀' | '女巫毒杀' | '投票放逐' | '猎人带走';
+
+/** Only these two let the hunter fire. Poison and a rival hunter's shot do not. */
+export const HUNTER_CAN_SHOOT: DeathReason[] = ['狼人猎杀', '投票放逐'];
 
 export interface Player {
   id: number;
@@ -37,7 +45,7 @@ export interface Player {
   role: Role;
   isAlive: boolean;
   isHuman: boolean;
-  deathReason?: string;
+  deathReason?: DeathReason;
   deathDay?: number;
 }
 
@@ -48,6 +56,12 @@ export interface GameLog {
   message: string;
   type: 'info' | 'wolf' | 'seer' | 'witch' | 'hunter' | 'guard' | 'idiot' | 'system' | 'discussion' | 'vote';
   playerName?: string;
+  /**
+   * Private knowledge the human earned through their own role (their seer
+   * checks, their wolf team's kill plan...). Shown in the human's log panel
+   * but never fed to an AI, otherwise every AI would read the human's cards.
+   */
+  secret?: boolean;
 }
 
 export interface WitchStatus {
@@ -65,25 +79,40 @@ export interface GameState {
   players: Player[];
   day: number;
   phase: Phase;
+  /** Bumped on every phase transition; the phase driver keys off it so a
+   *  StrictMode double-render can never run a phase's AI work twice. */
+  seq: number;
   logs: GameLog[];
   witchStatus: WitchStatus;
   seerRecords: SeerRecord[];
   winner?: Side;
+
+  // ── Night bookkeeping (cleared at dawn) ──
   nightKilledId?: number;
   witchSavedId?: number;
   witchPoisonedId?: number;
   guardTargetId?: number;
   lastGuardTargetId?: number;
+  nightSettled: boolean;
+  lastNightDeaths: number[];
+
+  // ── Pending death-triggered abilities ──
+  hunterPendingId?: number;
+  sheriffPendingHandoff: boolean;
+  resumePhase?: Phase;
+  resumeDay?: number;
+
+  // ── Day ──
   idiotRevealedId?: number;
-  hunterTargetId?: number;
-  hunterMustShoot?: boolean;
-  sheriffMustAct?: boolean;
-  lastNightDeaths: number[]; // ids of players who died last night
   currentDiscussionIndex: number;
-  votes: Record<number, number>; // voterId -> targetId
-  voteReasons: Record<number, string>; // voterId -> reason
-  sheriffId?: number;
   discussionDirection: 1 | -1;
+  votes: Record<number, number>;      // voterId -> targetId
+  voteReasons: Record<number, string>; // voterId -> reason
+
+  // ── Sheriff ──
+  sheriffId?: number;
   sheriffCandidates: number[];
+  /** The human has answered the "do you run?" prompt for this election. */
+  sheriffElectAnswered: boolean;
   isSheriffElectionCompleted: boolean;
 }

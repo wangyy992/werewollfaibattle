@@ -1,5 +1,5 @@
 import { Role, Player, Side } from '../types';
-import { PLAYER_COUNT, ROLE_CONFIG } from '../constants';
+import { PLAYER_COUNT, ROLE_CONFIG, WIN_RULE, GOD_ROLES, AI_PERSONAS } from '../constants';
 
 export function shuffle<T>(array: T[]): T[] {
   const newArray = [...array];
@@ -13,25 +13,19 @@ export function shuffle<T>(array: T[]): T[] {
 export function initializePlayers(): Player[] {
   const roles: Role[] = [];
   Object.entries(ROLE_CONFIG).forEach(([role, count]) => {
-    for (let i = 0; i < count; i++) {
-      roles.push(role as Role);
-    }
+    for (let i = 0; i < count; i++) roles.push(role as Role);
   });
 
-  // Randomly add Guard or Idiot as the 12th role (actually 11th + 12th roles are VILLAGER and something else in 10-player logic)
-  // In 12-player standard: 4 Wolf, 1 Seer, 1 Witch, 1 Hunter, 1 Guard/Idiot, 4 Villager
-  // My ROLE_CONFIG has 4 Wolf, 1 Seer, 1 Witch, 1 Hunter, 4 Villager (Total 11)
-  // Let's add the 12th one randomly.
-  const extraRole = Math.random() > 0.5 ? Role.GUARD : Role.IDIOT;
-  roles.push(extraRole);
-
   const shuffledRoles = shuffle(roles);
+  const humanSeat = Math.floor(Math.random() * PLAYER_COUNT) + 1;
+  const personaNames = shuffle(Object.keys(AI_PERSONAS));
+  let personaIndex = 0;
   return Array.from({ length: PLAYER_COUNT }, (_, i) => ({
     id: i + 1,
-    name: i === 0 ? '你' : `AI玩家${i + 1}`,
+    name: i + 1 === humanSeat ? '你' : personaNames[personaIndex++],
     role: shuffledRoles[i],
     isAlive: true,
-    isHuman: i === 0,
+    isHuman: i + 1 === humanSeat,
   }));
 }
 
@@ -39,12 +33,68 @@ export function getSide(role: Role): Side {
   return role === Role.WEREWOLF ? Side.WEREWOLVES : Side.GOOD;
 }
 
+/**
+ * SIDE_KILL (屠边, the 12-player standard): wolves win the moment every god
+ * is dead or every villager is dead.
+ * ALL_KILL (屠城): wolves win only once they are not outnumbered.
+ * Switch with WIN_RULE in constants.ts.
+ */
 export function checkWinner(players: Player[]): Side | null {
-  const alivePlayers = players.filter(p => p.isAlive);
-  const wolves = alivePlayers.filter(p => p.role === Role.WEREWOLF);
-  const good = alivePlayers.filter(p => p.role !== Role.WEREWOLF);
-
+  const alive = players.filter(p => p.isAlive);
+  const wolves = alive.filter(p => p.role === Role.WEREWOLF);
   if (wolves.length === 0) return Side.GOOD;
-  if (wolves.length >= good.length) return Side.WEREWOLVES;
-  return null;
+
+  if (WIN_RULE === 'ALL_KILL') {
+    const good = alive.filter(p => p.role !== Role.WEREWOLF);
+    return wolves.length >= good.length ? Side.WEREWOLVES : null;
+  }
+
+  const gods = alive.filter(p => GOD_ROLES.includes(p.role));
+  const villagers = alive.filter(p => p.role === Role.VILLAGER);
+  return gods.length === 0 || villagers.length === 0 ? Side.WEREWOLVES : null;
 }
+
+/**
+ * Seating is a circle, so speaking order wraps. `dir` 1 walks up the seat
+ * numbers, -1 walks down; both start at `start` and cover everyone exactly once.
+ */
+export function buildSpeakingOrder(aliveIds: number[], start: number, dir: 1 | -1): number[] {
+  const ring = dir === 1 ? [...aliveIds] : [...aliveIds].reverse();
+  const i = ring.indexOf(start);
+  if (i === -1) return ring;
+  return [...ring.slice(i), ...ring.slice(0, i)];
+}
+
+/** Seat that speaks first: the one after last night's casualty, else the lowest seat. */
+export function firstSpeaker(aliveIds: number[], lastDeaths: number[], dir: 1 | -1): number {
+  if (aliveIds.length === 0) return 0;
+  if (lastDeaths.length === 0) return dir === 1 ? aliveIds[0] : aliveIds[aliveIds.length - 1];
+  const dead = lastDeaths[lastDeaths.length - 1];
+  const after = dir === 1
+    ? aliveIds.find(id => id > dead)
+    : [...aliveIds].reverse().find(id => id < dead);
+  return after ?? (dir === 1 ? aliveIds[0] : aliveIds[aliveIds.length - 1]);
+}
+
+/**
+ * `winner` is the single highest-weighted target, or null on a tie / no votes —
+ * a tied exile vote kills nobody. `leaders` holds everyone on the top count, for
+ * the one caller (the wolf pack) that must still settle on a victim.
+ */
+export function tallyVotes(
+  votes: Record<number, number>,
+  weightOf: (voterId: number) => number = () => 1
+): { winner: number | null; leaders: number[]; counts: Record<number, number>; top: number } {
+  const counts: Record<number, number> = {};
+  Object.entries(votes).forEach(([voterId, targetId]) => {
+    counts[targetId] = (counts[targetId] || 0) + weightOf(+voterId);
+  });
+  let top = 0;
+  let leaders: number[] = [];
+  Object.entries(counts).forEach(([id, c]) => {
+    if (c > top) { top = c; leaders = [+id]; }
+    else if (c === top) leaders.push(+id);
+  });
+  return { winner: leaders.length === 1 ? leaders[0] : null, leaders, counts, top };
+}
+

@@ -1,14 +1,22 @@
 import { Role } from './types';
 
 export const PLAYER_COUNT = 12;
+/** Non-villager good roles — "神职". Used by the 屠边 win check. */
+export const GOD_ROLES: Role[] = [Role.SEER, Role.WITCH, Role.HUNTER, Role.GUARD, Role.IDIOT];
 
-// Base roles: 4 wolf + 1 seer + 1 witch + 1 hunter + 4 villager = 11
-// The 12th slot is Guard OR Idiot, randomly picked in initializePlayers
+/**
+ * 'SIDE_KILL' = 屠边: wolves win once all gods OR all villagers are dead (the
+ * 12-player standard). 'ALL_KILL' = 屠城: wolves win once they equal the good side.
+ */
+export const WIN_RULE: 'SIDE_KILL' | 'ALL_KILL' = 'SIDE_KILL';
+
+// Fixed 12-player 预女猎白 board: 4 wolves, 4 villagers and four gods.
 export const ROLE_CONFIG: Partial<Record<Role, number>> = {
   [Role.WEREWOLF]: 4,
   [Role.SEER]: 1,
   [Role.WITCH]: 1,
   [Role.HUNTER]: 1,
+  [Role.IDIOT]: 1,
   [Role.VILLAGER]: 4,
 };
 
@@ -32,15 +40,31 @@ export const ROLE_ICONS: Record<Role, string> = {
   [Role.VILLAGER]: '👤',
 };
 
+/** Stable table personalities. A seat keeps its voice regardless of the role it
+ * draws, so players cannot learn to read identity from writing style. */
+export const AI_PERSONAS: Record<string, { voice: string; instinct: string }> = {
+  '老钟': { voice: '话少、谨慎，常用短句，不轻易把话说死', instinct: '先找前后矛盾，再决定站边' },
+  '伊芙': { voice: '冷静直接，习惯点名追问，不说客套话', instinct: '重视发言动机与受益者' },
+  '铁匠': { voice: '脾气直，被怀疑时会正面反驳，偶尔口语化停顿', instinct: '更相信票型而不是漂亮发言' },
+  '修士': { voice: '克制、有条理，但每次只讲一两个重点', instinct: '对比玩家前后两轮的立场' },
+  '米拉': { voice: '敏感、犹豫，会自然地修正自己的判断', instinct: '观察谁在替谁解围' },
+  '猎户': { voice: '自信强势，喜欢给出明确归票目标', instinct: '用压力测试可疑玩家的反应' },
+  '诺亚': { voice: '慢热寡言，不重复场上共识，关键时刻才表态', instinct: '关注沉默者和边缘位置' },
+  '薇拉': { voice: '语气温和但观察细，常从细节提出疑点', instinct: '关注措辞变化和回避问题' },
+  '酒馆老板': { voice: '世故、口语化，会用反问，但不故意插科打诨', instinct: '判断谁在顺势带节奏' },
+  '阿兰': { voice: '年轻冲动，立场鲜明，也可能承认自己判断错了', instinct: '重视自己被谁攻击或保护' },
+  '渡鸦使者': { voice: '低沉警觉，惜字如金，偶尔用反问施压', instinct: '关注信息出现的时机和不自然的巧合' },
+};
+
 // ─── System Prompt ────────────────────────────────────────────────────────────
 // This is injected into every AI call as the base rulebook + strategy guide.
 export const SYSTEM_PROMPT = `你正在参与一局12人狼人杀标准局。
 
 【身份构成】
-狼人×4、预言家×1、女巫×1、猎人×1、守卫或白痴（随机其一）×1、平民×4
+狼人×4、预言家×1、女巫×1、猎人×1、白痴×1、平民×4
 
 【角色技能说明】
-- 🐺 狼人：每晚集体选择一名好人击杀。白天伪装身份，混淆视听。
+- 🐺 狼人：每晚全体狼人各自提名一名好人，得票最多者被击杀。白天伪装身份，混淆视听。
 - 🔮 预言家：每晚查验一名玩家，获知其真实阵营（好人/狼人）。
 - 🧙 女巫：拥有解药×1（救被击杀玩家）和毒药×1（毒死任意玩家），每晚最多用一瓶，不可自救。
 - 🏹 猎人：被狼人击杀或被投票放逐时，可开枪带走一名存活玩家（被女巫毒杀时不可开枪）。
@@ -48,9 +72,13 @@ export const SYSTEM_PROMPT = `你正在参与一局12人狼人杀标准局。
 - 🃏 白痴：被投票放逐时可翻牌免死一次，之后失去投票权但可继续发言。若被狼人击杀或女巫毒杀则正常死亡。
 - 👤 平民：无特殊技能，通过发言推理找出狼人。
 
+【胜利条件】
+- 好人胜利：所有狼人出局。
+- 狼人胜利：所有神职出局（屠神），或所有平民出局（屠民）。即"屠边"规则。
+
 【警长竞选规则（第一天白天）】
-- 所有玩家可选择上警竞选警长。
-- 上警玩家依次发言（可包含身份声明和查验结果）。
+- 所有存活玩家（包括你）可选择上警竞选警长。
+- 上警玩家按座位号依次发言，每人必须发言一次（可包含身份声明和查验结果）。未上警的玩家不发言。
 - 未上警的存活玩家投票选出警长；平票则本局无警长。
 - 警长权力：投票时拥有1.5票；决定每天发言顺序（从死者左边或右边开始）；死亡时可传递警徽给任意存活玩家，或撕毁警徽。
 
@@ -106,3 +134,4 @@ export const SYSTEM_PROMPT = `你正在参与一局12人狼人杀标准局。
 3. 投票必须给出明确理由。
 4. 符合自己的身份逻辑——好人找狼，狼人伪装。
 `;
+

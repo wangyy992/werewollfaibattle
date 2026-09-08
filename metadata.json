@@ -1,6 +1,6 @@
 {
-  "name": "Werewolf AI Battle Simulator",
-  "description": "A Werewolf game simulator where 1 human plays against 9 AI players powered by Gemini.",
+  "name": "Werewolf AI Battle",
+  "description": "12-player Werewolf (狼人杀) where you play one seat and 11 AI players fill the rest.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }
