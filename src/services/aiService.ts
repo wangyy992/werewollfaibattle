@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { Player, Role, Phase, GameState, Side } from "../types";
-import { SYSTEM_PROMPT, ROLE_LABELS } from "../constants";
+import { SYSTEM_PROMPT, ROLE_LABELS, AI_PERSONAS } from "../constants";
 
 // ─── Provider config ──────────────────────────────────────────────────────────
 // The key is read from .env.local (see .env.example). Vite exposes it through
@@ -12,7 +12,7 @@ const TIMEOUT_MS = 25_000;
 
 /** False when no key is configured — the UI says so instead of silently
  *  running every AI on canned fallback lines. */
-export const AI_ENABLED = API_KEY.length > 0;
+export const AI_ENABLED = API_KEY.length > 0 || import.meta.env.PROD;
 
 const ai = new OpenAI({
   apiKey: API_KEY,
@@ -59,7 +59,13 @@ function buildGameContext(player: Player, gameState: GameState): string {
     ? `【昨晚死亡】${gameState.lastNightDeaths.map(id => `${id}号`).join("、")}`
     : "【昨晚】平安夜，无人死亡";
 
-  return `=== 当前局面 ===
+  const persona = AI_PERSONAS[player.id];
+
+  return `=== 你的固定人物 ===
+${persona ? `你叫${persona.name}。说话特点：${persona.voice}。判断习惯：${persona.instinct}。` : '保持自然、简短的口语表达。'}
+人物性格与身份无关；不要因为抽到特殊身份而突然改变口吻。
+
+=== 当前局面 ===
 第${gameState.day}天 | 阶段：${gameState.phase}
 你是：${player.id}号（${ROLE_LABELS[player.role]}）
 ${wolfInfo}${seerInfo}${witchInfo}${sheriffInfo}${candidatesInfo}
@@ -70,7 +76,7 @@ ${nightInfo}
 === 近期发言记录 ===
 ${recentLogs || "（暂无记录）"}
 
-⚠️ 重要：你只能基于以上真实信息发言，严禁捏造不存在的游戏事件！`;
+⚠️ 只允许引用以上真实信息。无法确认的内容必须说成猜测，严禁捏造事件。`;
 }
 
 function safeJSON<T>(text: string | null | undefined, fallback: T): T {
@@ -84,14 +90,36 @@ function safeJSON<T>(text: string | null | undefined, fallback: T): T {
 
 async function callAI(prompt: string, json = false): Promise<string> {
   if (!AI_ENABLED) throw new Error("AI disabled: no API key configured");
+  const messages = [
+    { role: "system" as const, content: SYSTEM_PROMPT },
+    { role: "user" as const, content: prompt },
+  ];
+
+  // Production uses a same-origin Vercel function so the provider key never
+  // reaches the browser. Local development may still use a VITE_ key directly.
+  if (!API_KEY) {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages, json }),
+        signal: controller.signal,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'AI proxy request failed');
+      return data.content || '';
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }
   const response = await ai.chat.completions.create(
     {
       model: MODEL,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: prompt }
-      ],
+      messages,
       ...(json ? { response_format: { type: "json_object" as const } } : {}),
+      temperature: 0.88,
     },
     // Without this a stalled request would freeze the whole game loop.
     { timeout: TIMEOUT_MS }
@@ -152,12 +180,17 @@ ${strategies[player.role]}
 ${isSheriffPhase
   ? `这是警长竞选发言，你已上警。请直接开始你的竞选发言。`
   : `请以${player.id}号玩家身份发言。`}
-50-80字，逻辑清晰，语气自然。必须回应前面玩家的发言内容。
-直接输出发言内容，不加引号或任何前缀。`;
+先在心里完成判断：本轮最想影响谁、依据是哪一条公开事实、希望桌上采取什么行动。
+然后用真实玩家的口吻说出来，35-75字。可以犹豫、改口或带情绪，但不能写成主持人解说。
+不要使用“大家要多听发言”“不要盲目跟风”“综合判断”“我还在观察”这类空话。
+必须至少包含一个具体座位号；若现场信息确实不足，就向某个座位提出一个具体问题。
+
+只返回JSON：{"thought":"一句内部判断，不会展示给玩家","speech":"最终发言"}`;
 
   try {
-    const text = await callAI(prompt, false);
-    return text.trim() || "我还在观察，暂时保留意见。";
+    const text = await callAI(prompt, true);
+    const result = safeJSON<{ thought?: string; speech?: string }>(text, {});
+    return result.speech?.trim() || `${player.id === 2 ? '3' : '2'}号，你上一轮的站边理由能再说具体一点吗？`;
   } catch (error) {
     console.error("generateAIDiscussion Error:", error);
     const fallbacks: Record<Role, string> = {
@@ -170,6 +203,45 @@ ${isSheriffPhase
       [Role.VILLAGER]: "我觉得我们应该相信预言家的信息，跟着逻辑走，不要被狼人带节奏。",
     };
     return fallbacks[player.role];
+  }
+}
+
+export async function generateAITargetedReply(
+  player: Player,
+  question: string,
+  gameState: GameState,
+): Promise<string> {
+  const context = buildGameContext(player, gameState);
+  const prompt = `${context}
+
+【1号玩家正在当面质疑你】
+“${question.slice(0, 180)}”
+
+判断对方真正怀疑你的原因，然后正面回答。可以反驳、承认疏漏、反问或改变判断，但不能回避。
+保持固定人物口吻，30-70字，至少提到一个具体座位号。不要复述问题，不要说空话。
+只返回JSON：{"thought":"真实应对意图","speech":"当场回答"}`;
+  try {
+    const result = safeJSON<{ speech?: string }>(await callAI(prompt, true), {});
+    return result.speech?.trim() || `1号，你问到点上了。我现在更想听${player.id === 2 ? 3 : 2}号解释他的票。`;
+  } catch {
+    return `1号，我不回避。我的判断可能有偏差，但${player.id === 2 ? 3 : 2}号的立场变化更值得追。`;
+  }
+}
+
+export async function generateAIClosingStatement(player: Player, gameState: GameState): Promise<string> {
+  const context = buildGameContext(player, gameState);
+  const prompt = `${context}
+
+【归票阶段】讨论即将结束。用20-45字给出唯一放逐目标和最关键的一条理由。
+必须明确说“我会投X号”或“我弃票”，不可列出多个备选，不要重复规则。
+只返回JSON：{"voteId":数字或-1,"speech":"归票发言"}`;
+  try {
+    const result = safeJSON<{ speech?: string }>(await callAI(prompt, true), {});
+    return result.speech?.trim() || '我暂时没有足够把握，这一票会谨慎处理。';
+  } catch {
+    const targets = gameState.players.filter(p => p.isAlive && p.id !== player.id);
+    const target = pick(targets);
+    return target ? `我会投${target.id}号，他这一轮没有正面交代自己的站边。` : '我弃票。';
   }
 }
 

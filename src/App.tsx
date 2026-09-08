@@ -8,6 +8,7 @@ import {
   buildSpeakingOrder, firstSpeaker, tallyVotes,
 } from './lib/gameUtils';
 import * as AI from './services/aiService';
+import villageSquare from './assets/village-square.png';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const RC: Record<Role, string> = {
@@ -36,7 +37,7 @@ const NEXT_PHASE: Partial<Record<Phase, Phase>> = {
 };
 
 const PHASE_LABEL: Record<string, string> = {
-  NIGHT_GUARD:'守卫守护', NIGHT_WOLVES:'狼人出击', NIGHT_SEER:'预言家查验',
+  INIT:'身份揭晓', NIGHT_GUARD:'守卫守护', NIGHT_WOLVES:'狼人出击', NIGHT_SEER:'预言家查验',
   NIGHT_WITCH:'女巫行动', NIGHT_RESULT:'黎明来临', SHERIFF_ELECT:'警长竞选',
   SHERIFF_SPEECH:'竞选发言', SHERIFF_VOTE:'警长投票', SHERIFF_RESULT:'选举结果',
   DAY_DISCUSSION:'白天辩论', DAY_VOTING:'投票放逐', DAY_RESULT:'放逐结果',
@@ -61,11 +62,11 @@ function freshGame(): GameState {
   return {
     players: initializePlayers(),
     day: 1,
-    phase: Phase.NIGHT_GUARD,
+    phase: Phase.INIT,
     seq: 0,
     logs: [{
       id: 'init', day: 1, phase: Phase.INIT, type: 'system',
-      message: '游戏开始！12人局：4狼人 · 4平民 · 预言家 · 女巫 · 猎人 · 守卫或白痴（随机）。天黑请闭眼...',
+      message: '游戏开始！12人预女猎白标准局：4狼人 · 4平民 · 预言家 · 女巫 · 猎人 · 白痴。天黑请闭眼...',
     }],
     witchStatus: { hasSavePotion: true, hasPoisonPotion: true },
     seerRecords: [],
@@ -101,11 +102,18 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [speech, setSpeech] = useState('');
   const [mobileTab, setMobileTab] = useState<'game' | 'players'>('game');
+  const [showIdentity, setShowIdentity] = useState(true);
+  const [discussionOpen, setDiscussionOpen] = useState(false);
+  const [questionTarget, setQuestionTarget] = useState<number | null>(null);
+  const [questionText, setQuestionText] = useState('');
+  const [questionsUsed, setQuestionsUsed] = useState(0);
   const logEnd = useRef<HTMLDivElement>(null);
 
   const queueRef = useRef<number[]>([]);   // remaining speakers, [0] is on stage
   const runningRef = useRef(false);        // one speech loop at a time
   const ranSeq = useRef(-1);               // last phase-entry the driver handled
+  const gameEpochRef = useRef(0);          // invalidates promises from a reset game
+  const actionLockRef = useRef(false);     // blocks double-clicked async actions
 
   useEffect(() => { logEnd.current?.scrollIntoView({ behavior: 'smooth' }); }, [gs.logs]);
 
@@ -175,8 +183,10 @@ export default function App() {
     const guard = gsRef.current.players.find(p => p.role === Role.GUARD && p.isAlive);
     if (!guard) { advance(); return; }
     if (guard.isHuman) return;                        // human acts through the UI
+    const epoch = gameEpochRef.current;
     setBusy(true);
     const t = await AI.generateAIGuardAction(guard, gsRef.current);
+    if (epoch !== gameEpochRef.current) return;
     setBusy(false);
     commit({ guardTargetId: t ?? undefined });
     advance();
@@ -184,6 +194,9 @@ export default function App() {
 
   /** Every living wolf nominates; the most-nominated target dies. */
   const resolveWolfKill = useCallback(async (humanChoice?: number) => {
+    if (actionLockRef.current || gsRef.current.phase !== Phase.NIGHT_WOLVES) return;
+    actionLockRef.current = true;
+    const epoch = gameEpochRef.current;
     setBusy(true);
     const s = gsRef.current;
     const wolves = s.players.filter(p => p.role === Role.WEREWOLF && p.isAlive);
@@ -191,8 +204,10 @@ export default function App() {
     if (humanChoice) votes[HUMAN_ID] = humanChoice;
     for (const w of wolves.filter(p => !p.isHuman)) {
       const t = await AI.generateAIWolfKill(w, gsRef.current);
+      if (epoch !== gameEpochRef.current) return;
       if (t) votes[w.id] = t;
     }
+    actionLockRef.current = false;
     setBusy(false);
     const { winner, leaders } = tallyVotes(votes);
     const final = winner ?? pick(leaders) ?? null;
@@ -209,8 +224,10 @@ export default function App() {
     const seer = gsRef.current.players.find(p => p.role === Role.SEER && p.isAlive);
     if (!seer) { advance(); return; }
     if (seer.isHuman) return;
+    const epoch = gameEpochRef.current;
     setBusy(true);
     const t = await AI.generateAISeerCheck(seer, gsRef.current);
+    if (epoch !== gameEpochRef.current) return;
     setBusy(false);
     if (t) {
       const tgt = gsRef.current.players.find(p => p.id === t);
@@ -223,8 +240,10 @@ export default function App() {
     const witch = gsRef.current.players.find(p => p.role === Role.WITCH && p.isAlive);
     if (!witch) { advance(); return; }
     if (witch.isHuman) return;
+    const epoch = gameEpochRef.current;
     setBusy(true);
     const r = await AI.generateAIWitchAction(witch, gsRef.current);
+    if (epoch !== gameEpochRef.current) return;
     setBusy(false);
     if (r.action === 'save') {
       commit(s => ({ witchSavedId: s.nightKilledId, witchStatus: { ...s.witchStatus, hasSavePotion: false } }));
@@ -270,6 +289,7 @@ export default function App() {
   const runQueue = useCallback(async () => {
     if (runningRef.current) return;
     runningRef.current = true;
+    const epoch = gameEpochRef.current;
     try {
       while (queueRef.current.length) {
         const id = queueRef.current[0];
@@ -281,13 +301,19 @@ export default function App() {
 
         setBusy(true);
         const text = await AI.generateAIDiscussion(p, gsRef.current);
+        if (epoch !== gameEpochRef.current) return;
         setBusy(false);
         say(text, 'discussion', { playerName: `${id}号` });
         queueRef.current.shift();
         await sleep(500);
       }
       commit({ currentDiscussionIndex: -1 });
-      advance();
+      if (gsRef.current.phase === Phase.DAY_DISCUSSION) {
+        setDiscussionOpen(true);
+        say('自由讨论开始。你可以点名质疑最多三次，然后进入归票。');
+      } else {
+        advance();
+      }
     } finally {
       runningRef.current = false;
     }
@@ -305,6 +331,10 @@ export default function App() {
     const s = gsRef.current;
     const aliveIds = s.players.filter(p => p.isAlive).map(p => p.id).sort((a, b) => a - b);
     const start = firstSpeaker(aliveIds, s.lastNightDeaths, dir);
+    setDiscussionOpen(false);
+    setQuestionTarget(null);
+    setQuestionText('');
+    setQuestionsUsed(0);
     commit({ discussionDirection: dir });
     say(s.sheriffId
       ? `警长${s.sheriffId}号决定：从${start}号开始，${dir === 1 ? '顺序' : '逆序'}发言。`
@@ -312,6 +342,70 @@ export default function App() {
     queueRef.current = buildSpeakingOrder(aliveIds, start, dir);
     runQueue();
   }, [commit, runQueue, say]);
+
+  const askPlayer = async () => {
+    if (actionLockRef.current || !discussionOpen || questionsUsed >= 3 || !questionTarget || !questionText.trim()) return;
+    const target = gsRef.current.players.find(p => p.id === questionTarget && p.isAlive && !p.isHuman);
+    if (!target) return;
+    actionLockRef.current = true;
+    const epoch = gameEpochRef.current;
+    const question = questionText.trim();
+    setQuestionText('');
+    say(question, 'discussion', { playerName: `你 · 质疑${target.id}号` });
+    commit({ currentDiscussionIndex: target.id });
+    setBusy(true);
+    try {
+      const reply = await AI.generateAITargetedReply(target, question, gsRef.current);
+      if (epoch !== gameEpochRef.current) return;
+      say(reply, 'discussion', { playerName: `${target.id}号 · 回应` });
+
+      // One organic interjection per discussion keeps the table alive without
+      // turning every question into another full speaking round.
+      if (questionsUsed === 1) {
+        const interjector = gsRef.current.players.find(p => p.isAlive && !p.isHuman && p.id !== target.id);
+        if (interjector) {
+          commit({ currentDiscussionIndex: interjector.id });
+          const aside = await AI.generateAIDiscussion(interjector, gsRef.current);
+          if (epoch !== gameEpochRef.current) return;
+          say(aside, 'discussion', { playerName: `${interjector.id}号 · 插话` });
+        }
+      }
+      setQuestionsUsed(n => n + 1);
+    } finally {
+      if (epoch === gameEpochRef.current) {
+        commit({ currentDiscussionIndex: -1 });
+        setBusy(false);
+      }
+      actionLockRef.current = false;
+    }
+  };
+
+  const finishDiscussion = async () => {
+    if (actionLockRef.current || !discussionOpen) return;
+    actionLockRef.current = true;
+    const epoch = gameEpochRef.current;
+    setBusy(true);
+    try {
+      const aliveAI = gsRef.current.players.filter(p => p.isAlive && !p.isHuman);
+      const ordered = [
+        ...aliveAI.filter(p => p.id === gsRef.current.sheriffId),
+        ...aliveAI.filter(p => p.id !== gsRef.current.sheriffId),
+      ].slice(0, 3);
+      say('讨论结束，进入归票。三位玩家将给出最后立场。');
+      for (const p of ordered) {
+        commit({ currentDiscussionIndex: p.id });
+        const closing = await AI.generateAIClosingStatement(p, gsRef.current);
+        if (epoch !== gameEpochRef.current) return;
+        say(closing, 'vote', { playerName: `${p.id}号 · 归票` });
+      }
+      setDiscussionOpen(false);
+      commit({ currentDiscussionIndex: -1 });
+      advance();
+    } finally {
+      if (epoch === gameEpochRef.current) setBusy(false);
+      actionLockRef.current = false;
+    }
+  };
 
   const startSheriffSpeech = useCallback(() => {
     const s = gsRef.current;
@@ -329,10 +423,12 @@ export default function App() {
 
   // ── Sheriff election ────────────────────────────────────────────────────────
   const runSheriffElection = useCallback(async () => {
+    const epoch = gameEpochRef.current;
     setBusy(true);
     const cands = [...gsRef.current.sheriffCandidates];
     for (const p of gsRef.current.players.filter(x => x.isAlive && !x.isHuman)) {
       const run = await AI.generateAISheriffChoice(p, { ...gsRef.current, sheriffCandidates: cands });
+      if (epoch !== gameEpochRef.current) return;
       if (run) cands.push(p.id);
     }
     setBusy(false);
@@ -351,6 +447,9 @@ export default function App() {
   };
 
   const collectSheriffVotes = useCallback(async (humanVote?: number | null) => {
+    if (actionLockRef.current || gsRef.current.phase !== Phase.SHERIFF_VOTE) return;
+    actionLockRef.current = true;
+    const epoch = gameEpochRef.current;
     setBusy(true);
     const s = gsRef.current;
     const votes: Record<number, number> = {};
@@ -363,10 +462,12 @@ export default function App() {
     }
     for (const v of s.players.filter(p => p.isAlive && !p.isHuman && !s.sheriffCandidates.includes(p.id))) {
       const r = await AI.generateAIVote(v, gsRef.current, s.sheriffCandidates);
+      if (epoch !== gameEpochRef.current) return;
       if (r.voteId) { votes[v.id] = r.voteId; reasons[v.id] = r.reason; }
       say(r.voteId ? `投${r.voteId}号。${r.reason}` : `弃权。${r.reason}`, 'vote', { playerName: `${v.id}号` });
     }
     setBusy(false);
+    actionLockRef.current = false;
     const { winner, top } = tallyVotes(votes);
     say(winner ? `🏅 ${winner}号以${top}票当选警长！` : '警长竞选平票，本局不设警长。');
     commit({ sheriffId: winner ?? undefined, isSheriffElectionCompleted: true, votes, voteReasons: reasons });
@@ -375,6 +476,9 @@ export default function App() {
 
   // ── Day vote ────────────────────────────────────────────────────────────────
   const runDayVote = useCallback(async (humanVote?: number | null) => {
+    if (actionLockRef.current || gsRef.current.phase !== Phase.DAY_VOTING) return;
+    actionLockRef.current = true;
+    const epoch = gameEpochRef.current;
     setBusy(true);
     const s = gsRef.current;
     const votes: Record<number, number> = {};
@@ -387,10 +491,12 @@ export default function App() {
     }
     for (const v of s.players.filter(p => p.isAlive && !p.isHuman && s.idiotRevealedId !== p.id)) {
       const r = await AI.generateAIVote(v, gsRef.current);
+      if (epoch !== gameEpochRef.current) return;
       if (r.voteId) { votes[v.id] = r.voteId; reasons[v.id] = r.reason; }
       say(r.voteId ? `投${r.voteId}号。${r.reason}` : `弃权。${r.reason}`, 'vote', { playerName: `${v.id}号` });
     }
     setBusy(false);
+    actionLockRef.current = false;
 
     // The sheriff's ballot is worth 1.5. A tie exiles nobody.
     const { winner, top } = tallyVotes(votes, id => (id === s.sheriffId ? 1.5 : 1));
@@ -426,8 +532,10 @@ export default function App() {
     const sheriff = s.players.find(p => p.id === s.sheriffId);
     if (!sheriff) { commit({ sheriffPendingHandoff: false, sheriffId: undefined }); advance(); return; }
     if (sheriff.isHuman) return;
+    const epoch = gameEpochRef.current;
     setBusy(true);
     const t = await AI.generateAISheriffAction(sheriff, gsRef.current);
+    if (epoch !== gameEpochRef.current) return;
     setBusy(false);
     doHandoff(t);
   }, [advance, commit, doHandoff]);
@@ -457,8 +565,10 @@ export default function App() {
     const hunter = s.players.find(p => p.id === s.hunterPendingId);
     if (!hunter) { commit({ hunterPendingId: undefined }); advance(); return; }
     if (hunter.isHuman) return;
+    const epoch = gameEpochRef.current;
     setBusy(true);
     const t = await AI.generateAIHunterShoot(hunter, gsRef.current);
+    if (epoch !== gameEpochRef.current) return;
     setBusy(false);
     doHunterShot(t);
   }, [advance, commit, doHunterShot]);
@@ -531,11 +641,13 @@ export default function App() {
 
   // ── Human night actions ─────────────────────────────────────────────────────
   const hGuard = (t: number | null) => {
+    if (gsRef.current.phase !== Phase.NIGHT_GUARD) return;
     commit({ guardTargetId: t ?? undefined });
     say(t ? `你守护了${t}号。` : '你选择空守。', 'guard', { secret: true });
     advance();
   };
   const hCheck = (id: number) => {
+    if (gsRef.current.phase !== Phase.NIGHT_SEER) return;
     const t = gsRef.current.players.find(p => p.id === id)!;
     const side = getSide(t.role);
     commit(s => ({ seerRecords: [...s.seerRecords, { targetId: id, role: t.role, side }] }));
@@ -543,6 +655,7 @@ export default function App() {
     advance();
   };
   const hWitch = (action: 'save' | 'poison' | 'skip', id?: number) => {
+    if (gsRef.current.phase !== Phase.NIGHT_WITCH) return;
     if (action === 'save') {
       commit(s => ({ witchSavedId: s.nightKilledId, witchStatus: { ...s.witchStatus, hasSavePotion: false } }));
       say('你使用了解药。', 'witch', { secret: true });
@@ -556,11 +669,18 @@ export default function App() {
   };
 
   const reset = () => {
+    gameEpochRef.current += 1;
+    actionLockRef.current = false;
     queueRef.current = [];
     runningRef.current = false;
     ranSeq.current = -1;
     setSpeech('');
     setBusy(false);
+    setShowIdentity(true);
+    setDiscussionOpen(false);
+    setQuestionTarget(null);
+    setQuestionText('');
+    setQuestionsUsed(0);
     gsRef.current = freshGame();
     setGs(gsRef.current);
   };
@@ -589,11 +709,52 @@ export default function App() {
     (phase === Phase.NIGHT_SEER && iAm(Role.SEER)) ||
     (phase === Phase.NIGHT_WITCH && iAm(Role.WITCH));
 
+  const beginNight = () => {
+    setShowIdentity(false);
+    goto(Phase.NIGHT_GUARD);
+  };
+
   useEffect(() => { setMobileTab('game'); }, [gs.phase, gs.currentDiscussionIndex]);
 
   return (
-    <div className="h-[100dvh] flex flex-col overflow-hidden text-white"
-      style={{ background: bg, transition: 'background 1s ease', fontFamily: "'Noto Serif SC',serif" }}>
+    <div className="game-shell h-[100dvh] flex flex-col overflow-hidden text-white"
+      style={{
+        backgroundImage: `linear-gradient(rgba(4,8,15,.38),rgba(4,7,13,.82)),url(${villageSquare})`,
+        fontFamily: "'Noto Serif SC','Songti SC',serif",
+      }}>
+
+      {showIdentity && hp && (
+        <div className={`identity-reveal identity-${hr.toLowerCase()}`} role="dialog" aria-modal="true">
+          <div className="reveal-moon" />
+          <div className="reveal-mist reveal-mist-a" />
+          <div className="reveal-mist reveal-mist-b" />
+          <motion.div className="identity-card"
+            initial={{ opacity: 0, rotateY: 90, scale: .82 }}
+            animate={{ opacity: 1, rotateY: 0, scale: 1 }}
+            transition={{ duration: .9, ease: [0.16, 1, 0.3, 1] }}>
+            <div className="identity-kicker">命运已经落定</div>
+            <motion.div className="identity-sigil"
+              animate={{ scale: [1, 1.08, 1], filter: ['brightness(1)', 'brightness(1.4)', 'brightness(1)'] }}
+              transition={{ duration: 2.4, repeat: Infinity }}>
+              {ROLE_ICONS[hr]}
+            </motion.div>
+            <div className="identity-title">{ROLE_LABELS[hr]}</div>
+            <div className="identity-oath">
+              {hr === Role.WEREWOLF && '月色会掩盖你的利爪。认清同伴，活到最后。'}
+              {hr === Role.SEER && '星辰只向你吐露真相。每夜查验一人的阵营。'}
+              {hr === Role.WITCH && '生与死各在一瓶药里。选择比力量更重要。'}
+              {hr === Role.VILLAGER && '你没有神力，只有判断。听清每一句谎言。'}
+              {hr === Role.HUNTER && '你的枪只响一次。让最后一颗子弹指向黑暗。'}
+              {hr === Role.IDIOT && '荒诞是你的护甲。被放逐时，揭开真正的身份。'}
+              {hr === Role.GUARD && '守护尚未被黑夜吞没的人。'}
+            </div>
+            {hr === Role.WEREWOLF && (
+              <div className="identity-allies">同伴 · {gs.players.filter(p => p.role === Role.WEREWOLF && !p.isHuman).map(p => `${p.id}号 ${p.name}`).join(' · ')}</div>
+            )}
+            <button className="enter-village" onClick={beginNight}>进入村庄</button>
+          </motion.div>
+        </div>
+      )}
 
       <div className="flex-1 flex overflow-hidden min-h-0">
 
@@ -732,6 +893,9 @@ export default function App() {
               <span>未检测到 API Key，AI 玩家将使用离线兜底逻辑（发言为预设文本）。在 <code>.env.local</code> 中设置 <code>VITE_DEEPSEEK_API_KEY</code> 后重启开发服务器。</span>
             </div>
           )}
+
+          <VillageTable players={gs.players} activeId={gs.currentDiscussionIndex}
+            sheriffId={gs.sheriffId} idiotId={gs.idiotRevealedId} humanRole={hr} revealAll={over} />
 
           <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2 pb-4">
             <AnimatePresence initial={false}>
@@ -910,7 +1074,7 @@ export default function App() {
                 )}
 
                 {/* Day */}
-                {phase === Phase.DAY_DISCUSSION && gs.currentDiscussionIndex === -1 && sheriffIsHuman && ha && (
+                {phase === Phase.DAY_DISCUSSION && !discussionOpen && gs.currentDiscussionIndex === -1 && sheriffIsHuman && ha && (
                   <div className="flex flex-col items-center gap-3">
                     <p className="text-xs opacity-40">你是警长，决定今天的发言方向：</p>
                     <Btns>
@@ -924,6 +1088,30 @@ export default function App() {
                 )}
                 {phase === Phase.DAY_DISCUSSION && gs.currentDiscussionIndex > 0 && gs.currentDiscussionIndex !== HUMAN_ID && (
                   <p className="text-center opacity-40 text-sm italic">{gs.currentDiscussionIndex}号正在发言...</p>
+                )}
+
+                {phase === Phase.DAY_DISCUSSION && discussionOpen && gs.currentDiscussionIndex === -1 && (
+                  <div className="open-floor">
+                    <div className="open-floor-head">
+                      <div><span>自由讨论</span><small>还可质疑 {3 - questionsUsed} 次</small></div>
+                      <button onClick={finishDiscussion}>结束讨论 · 进入归票</button>
+                    </div>
+                    {questionsUsed < 3 && ha && (
+                      <>
+                        <div className="target-strip">
+                          {alive.filter(p => !p.isHuman).map(p => (
+                            <button key={p.id} className={questionTarget === p.id ? 'selected' : ''}
+                              onClick={() => setQuestionTarget(p.id)}>{p.id}号 {p.name}</button>
+                          ))}
+                        </div>
+                        <div className="question-compose">
+                          <textarea value={questionText} onChange={e => setQuestionText(e.target.value)} maxLength={180}
+                            placeholder={questionTarget ? `直接质疑${questionTarget}号，例如：你上一轮说信3号，为什么最后投了5号？` : '先选择一名玩家…'} />
+                          <button onClick={askPlayer} disabled={!questionTarget || !questionText.trim()}>点名质疑</button>
+                        </div>
+                      </>
+                    )}
+                  </div>
                 )}
 
                 {phase === Phase.DAY_VOTING && humanCanDayVote && (
@@ -992,6 +1180,26 @@ export default function App() {
 }
 
 // ── Mini components ───────────────────────────────────────────────────────────
+function VillageTable({ players, activeId, sheriffId, idiotId, humanRole, revealAll }: {
+  players: Player[]; activeId: number; sheriffId?: number; idiotId?: number; humanRole: Role; revealAll: boolean;
+}) {
+  return (
+    <section className="village-table hidden md:block" aria-label="村庄圆桌">
+      <div className="table-core"><div className="table-mark">W</div><div className="table-caption">灰雾村议会</div></div>
+      {players.map((p, index) => {
+        const angle = (index / players.length) * Math.PI * 2 - Math.PI / 2;
+        const known = revealAll || p.isHuman || (humanRole === Role.WEREWOLF && p.role === Role.WEREWOLF) || p.id === idiotId;
+        return <div key={p.id} className={`table-player ${activeId === p.id ? 'is-speaking' : ''} ${p.isAlive ? '' : 'is-dead'}`}
+          style={{ left: `${50 + Math.cos(angle) * 43}%`, top: `${50 + Math.sin(angle) * 39}%` }}>
+          <div className="player-token"><span>{known ? ROLE_ICONS[p.role] : p.id}</span>
+            {p.id === sheriffId && p.isAlive && <Crown className="token-crown" />}</div>
+          <div className="token-name">{p.id} · {p.isHuman ? '你' : p.name}</div>
+        </div>;
+      })}
+    </section>
+  );
+}
+
 function Panel({ label, color, children }: { label: string; color: string; children: React.ReactNode }) {
   return (
     <div className="w-full space-y-3">

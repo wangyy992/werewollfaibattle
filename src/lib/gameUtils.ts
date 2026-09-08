@@ -1,5 +1,5 @@
 import { Role, Player, Side } from '../types';
-import { PLAYER_COUNT, ROLE_CONFIG, WIN_RULE, GOD_ROLES } from '../constants';
+import { PLAYER_COUNT, ROLE_CONFIG, WIN_RULE, GOD_ROLES, AI_PERSONAS } from '../constants';
 
 export function shuffle<T>(array: T[]): T[] {
   const newArray = [...array];
@@ -16,13 +16,10 @@ export function initializePlayers(): Player[] {
     for (let i = 0; i < count; i++) roles.push(role as Role);
   });
 
-  // The 12th seat is Guard or Idiot, drawn at random each game.
-  roles.push(Math.random() > 0.5 ? Role.GUARD : Role.IDIOT);
-
   const shuffledRoles = shuffle(roles);
   return Array.from({ length: PLAYER_COUNT }, (_, i) => ({
     id: i + 1,
-    name: i === 0 ? '你' : `AI玩家${i + 1}`,
+    name: i === 0 ? '你' : (AI_PERSONAS[i + 1]?.name ?? `${i + 1}号村民`),
     role: shuffledRoles[i],
     isAlive: true,
     isHuman: i === 0,
