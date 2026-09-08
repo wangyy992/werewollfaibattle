@@ -76,3 +76,4 @@ src/
 流程由 `App.tsx` 里的单一 phase driver 驱动：每次阶段切换递增 `seq`，driver 以 `seq` 去重，
 因此 StrictMode 下不会重复触发。所有异步逻辑读 `gsRef.current` 而非闭包快照，
 保证后发言的 AI 能看到本轮前面所有人的发言。
+

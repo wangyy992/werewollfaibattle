@@ -17,12 +17,15 @@ export function initializePlayers(): Player[] {
   });
 
   const shuffledRoles = shuffle(roles);
+  const humanSeat = Math.floor(Math.random() * PLAYER_COUNT) + 1;
+  const personaNames = shuffle(Object.keys(AI_PERSONAS));
+  let personaIndex = 0;
   return Array.from({ length: PLAYER_COUNT }, (_, i) => ({
     id: i + 1,
-    name: i === 0 ? '你' : (AI_PERSONAS[i + 1]?.name ?? `${i + 1}号村民`),
+    name: i + 1 === humanSeat ? '你' : personaNames[personaIndex++],
     role: shuffledRoles[i],
     isAlive: true,
-    isHuman: i === 0,
+    isHuman: i + 1 === humanSeat,
   }));
 }
 
@@ -94,3 +97,4 @@ export function tallyVotes(
   });
   return { winner: leaders.length === 1 ? leaders[0] : null, leaders, counts, top };
 }
+

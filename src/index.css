@@ -31,6 +31,10 @@ button { cursor: pointer; }
   background: radial-gradient(circle at 50% 22%, rgba(90,116,146,.25), transparent 34%), #05080e;
   perspective: 1200px;
 }
+.identity-hero,.identity-video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:.48; filter:saturate(.8) brightness(.58); }
+.identity-video { opacity:.64; }
+.identity-reveal::after { content:""; position:absolute; inset:0; background:linear-gradient(180deg,#02050a22,#02050a88 55%,#02050aec),radial-gradient(circle at center,transparent,#02050ab8); pointer-events:none; }
+.identity-card { z-index:2; }
 .reveal-moon {
   position: absolute;
   top: 7%;
@@ -95,6 +99,8 @@ button { cursor: pointer; }
 .table-caption { color:#9c835c; font-size:9px; letter-spacing:.42em; margin-top:8px; text-indent:.42em; opacity:.65; }
 .table-player { position:absolute; transform:translate(-50%,-50%); display:flex; flex-direction:column; align-items:center; gap:4px; transition:.35s ease; z-index:2; }
 .player-token { width:46px; height:46px; border-radius:50%; display:grid; place-items:center; position:relative; color:#d8cdb9; font:700 13px Georgia,serif; background:linear-gradient(145deg,#242830,#0a0d12); border:1px solid rgba(218,189,126,.38); box-shadow:0 8px 18px #000b,inset 0 1px 0 #ffffff18; }
+.player-token img { position:absolute; inset:2px; width:calc(100% - 4px); height:calc(100% - 4px); object-fit:cover; object-position:top center; border-radius:50%; filter:saturate(.72) brightness(.78); }
+.player-token span { position:relative; z-index:1; text-shadow:0 2px 5px #000,0 0 7px #000; }
 .token-crown { position:absolute; width:16px; height:16px; top:-11px; color:#e7ba58; filter:drop-shadow(0 2px 4px #000); }
 .token-name { max-width:92px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#b7ab96; font-size:9px; text-shadow:0 2px 5px #000; }
 .table-player.is-speaking { transform:translate(-50%,-50%) scale(1.18); z-index:4; }
@@ -137,3 +143,4 @@ button { cursor: pointer; }
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+

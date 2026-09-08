@@ -59,10 +59,10 @@ function buildGameContext(player: Player, gameState: GameState): string {
     ? `【昨晚死亡】${gameState.lastNightDeaths.map(id => `${id}号`).join("、")}`
     : "【昨晚】平安夜，无人死亡";
 
-  const persona = AI_PERSONAS[player.id];
+  const persona = AI_PERSONAS[player.name];
 
   return `=== 你的固定人物 ===
-${persona ? `你叫${persona.name}。说话特点：${persona.voice}。判断习惯：${persona.instinct}。` : '保持自然、简短的口语表达。'}
+${persona ? `你叫${player.name}。说话特点：${persona.voice}。判断习惯：${persona.instinct}。` : '保持自然、简短的口语表达。'}
 人物性格与身份无关；不要因为抽到特殊身份而突然改变口吻。
 
 === 当前局面 ===
@@ -212,9 +212,11 @@ export async function generateAITargetedReply(
   gameState: GameState,
 ): Promise<string> {
   const context = buildGameContext(player, gameState);
+  const humanId = gameState.players.find(p => p.isHuman)?.id ?? 1;
+  const fallbackTarget = gameState.players.find(p => p.isAlive && p.id !== player.id && !p.isHuman)?.id ?? humanId;
   const prompt = `${context}
 
-【1号玩家正在当面质疑你】
+【${humanId}号玩家正在当面质疑你】
 “${question.slice(0, 180)}”
 
 判断对方真正怀疑你的原因，然后正面回答。可以反驳、承认疏漏、反问或改变判断，但不能回避。
@@ -222,9 +224,9 @@ export async function generateAITargetedReply(
 只返回JSON：{"thought":"真实应对意图","speech":"当场回答"}`;
   try {
     const result = safeJSON<{ speech?: string }>(await callAI(prompt, true), {});
-    return result.speech?.trim() || `1号，你问到点上了。我现在更想听${player.id === 2 ? 3 : 2}号解释他的票。`;
+    return result.speech?.trim() || `${humanId}号，你问到点上了。我现在更想听${fallbackTarget}号解释他的票。`;
   } catch {
-    return `1号，我不回避。我的判断可能有偏差，但${player.id === 2 ? 3 : 2}号的立场变化更值得追。`;
+    return `${humanId}号，我不回避。我的判断可能有偏差，但${fallbackTarget}号的立场变化更值得追。`;
   }
 }
 
@@ -512,3 +514,4 @@ ${player.role === Role.WEREWOLF
     return null;
   }
 }
+

@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Moon, Sun, Skull, ChevronRight, Send, RotateCcw, Crown, AlertTriangle } from 'lucide-react';
 import { Player, Role, Phase, GameState, GameLog, Side, DeathReason, HUNTER_CAN_SHOOT } from './types';
-import { ROLE_LABELS, ROLE_ICONS, HUMAN_ID } from './constants';
+import { ROLE_LABELS, ROLE_ICONS } from './constants';
 import {
   initializePlayers, checkWinner, getSide,
   buildSpeakingOrder, firstSpeaker, tallyVotes,
 } from './lib/gameUtils';
 import * as AI from './services/aiService';
 import villageSquare from './assets/village-square.png';
+import { CHARACTER_ART, ROLE_ART, ROLE_VIDEO } from './artAssets';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const RC: Record<Role, string> = {
@@ -46,6 +47,7 @@ const PHASE_LABEL: Record<string, string> = {
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const pick = <T,>(a: T[]): T | undefined => a.length ? a[Math.floor(Math.random() * a.length)] : undefined;
+const humanIdOf = (state: GameState): number => state.players.find(p => p.isHuman)?.id ?? 1;
 
 /**
  * How a death is announced to the table. A night death never reveals whether
@@ -201,7 +203,7 @@ export default function App() {
     const s = gsRef.current;
     const wolves = s.players.filter(p => p.role === Role.WEREWOLF && p.isAlive);
     const votes: Record<number, number> = {};
-    if (humanChoice) votes[HUMAN_ID] = humanChoice;
+    if (humanChoice) votes[humanIdOf(s)] = humanChoice;
     for (const w of wolves.filter(p => !p.isHuman)) {
       const t = await AI.generateAIWolfKill(w, gsRef.current);
       if (epoch !== gameEpochRef.current) return;
@@ -440,7 +442,7 @@ export default function App() {
   const answerSheriffRun = (run: boolean) => {
     commit(s => ({
       sheriffElectAnswered: true,
-      sheriffCandidates: run ? [...s.sheriffCandidates, HUMAN_ID] : s.sheriffCandidates,
+      sheriffCandidates: run ? [...s.sheriffCandidates, humanIdOf(s)] : s.sheriffCandidates,
     }));
     say(run ? '你选择上警，参与警长竞选。' : '你选择不上警。');
     runSheriffElection();
@@ -455,9 +457,9 @@ export default function App() {
     const votes: Record<number, number> = {};
     const reasons: Record<number, string> = {};
     const human = s.players.find(p => p.isHuman);
-    const humanVotes = !!human?.isAlive && !s.sheriffCandidates.includes(HUMAN_ID);
+    const humanVotes = !!human?.isAlive && !s.sheriffCandidates.includes(human.id);
     if (humanVotes) {
-      if (humanVote) { votes[HUMAN_ID] = humanVote; reasons[HUMAN_ID] = '你的投票。'; }
+      if (humanVote) { votes[human!.id] = humanVote; reasons[human!.id] = '你的投票。'; }
       say(humanVote ? `投${humanVote}号。` : '弃权。', 'vote', { playerName: '你' });
     }
     for (const v of s.players.filter(p => p.isAlive && !p.isHuman && !s.sheriffCandidates.includes(p.id))) {
@@ -484,9 +486,9 @@ export default function App() {
     const votes: Record<number, number> = {};
     const reasons: Record<number, string> = {};
     const human = s.players.find(p => p.isHuman);
-    const humanVotes = !!human?.isAlive && s.idiotRevealedId !== HUMAN_ID;
+    const humanVotes = !!human?.isAlive && s.idiotRevealedId !== human.id;
     if (humanVotes) {
-      if (humanVote) { votes[HUMAN_ID] = humanVote; reasons[HUMAN_ID] = '你的投票。'; }
+      if (humanVote) { votes[human!.id] = humanVote; reasons[human!.id] = '你的投票。'; }
       say(humanVote ? `投${humanVote}号。` : '弃权。', 'vote', { playerName: '你' });
     }
     for (const v of s.players.filter(p => p.isAlive && !p.isHuman && s.idiotRevealedId !== p.id)) {
@@ -611,7 +613,7 @@ export default function App() {
       case Phase.SHERIFF_SPEECH: startSheriffSpeech(); break;
 
       case Phase.SHERIFF_VOTE: {
-        const humanVotes = !!human?.isAlive && !s.sheriffCandidates.includes(HUMAN_ID);
+        const humanVotes = !!human?.isAlive && !s.sheriffCandidates.includes(human.id);
         if (humanVotes) break;                        // human ballot comes from the UI
         collectSheriffVotes();
         break;
@@ -625,7 +627,7 @@ export default function App() {
       }
 
       case Phase.DAY_VOTING: {
-        const humanVotes = !!human?.isAlive && s.idiotRevealedId !== HUMAN_ID;
+        const humanVotes = !!human?.isAlive && s.idiotRevealedId !== human.id;
         if (humanVotes) break;
         runDayVote();
         break;
@@ -687,6 +689,7 @@ export default function App() {
 
   // ── Derived view state ──────────────────────────────────────────────────────
   const hp = gs.players.find(p => p.isHuman);
+  const hid = hp?.id ?? 1;
   const hr = hp?.role ?? Role.VILLAGER;
   const ha = !!hp?.isAlive;
   const { phase, day } = gs;
@@ -699,10 +702,10 @@ export default function App() {
     : PHASE_BG.DAY;
 
   const iAm = (role: Role) => ha && hr === role;
-  const pendingHunterIsHuman = gs.hunterPendingId === HUMAN_ID;
-  const sheriffIsHuman = gs.sheriffId === HUMAN_ID;
-  const humanIsSheriffVoter = ha && !gs.sheriffCandidates.includes(HUMAN_ID);
-  const humanCanDayVote = ha && gs.idiotRevealedId !== HUMAN_ID;
+  const pendingHunterIsHuman = gs.hunterPendingId === hid;
+  const sheriffIsHuman = gs.sheriffId === hid;
+  const humanIsSheriffVoter = ha && !gs.sheriffCandidates.includes(hid);
+  const humanCanDayVote = ha && gs.idiotRevealedId !== hid;
   const waitingForMe =
     (phase === Phase.NIGHT_GUARD && iAm(Role.GUARD)) ||
     (phase === Phase.NIGHT_WOLVES && iAm(Role.WEREWOLF)) ||
@@ -725,6 +728,9 @@ export default function App() {
 
       {showIdentity && hp && (
         <div className={`identity-reveal identity-${hr.toLowerCase()}`} role="dialog" aria-modal="true">
+          <img className="identity-hero" src={ROLE_ART[hr]} alt="" onError={e => { e.currentTarget.style.display = 'none'; }} />
+          <video className="identity-video" src={ROLE_VIDEO[hr]} autoPlay muted playsInline
+            poster={ROLE_ART[hr]} onError={e => { e.currentTarget.style.display = 'none'; }} />
           <div className="reveal-moon" />
           <div className="reveal-mist reveal-mist-a" />
           <div className="reveal-mist reveal-mist-b" />
@@ -790,7 +796,7 @@ export default function App() {
                 <div className="mt-3 pt-3 border-t text-xs" style={{ borderColor: `${RC[hr]}30` }}>
                   <span className="opacity-40">队友：</span>
                   <span style={{ color: RC[hr] }}>
-                    {gs.players.filter(p => p.role === Role.WEREWOLF && p.id !== HUMAN_ID && p.isAlive).map(p => `${p.id}号`).join('、') || '无'}
+                    {gs.players.filter(p => p.role === Role.WEREWOLF && p.id !== hid && p.isAlive).map(p => `${p.id}号`).join('、') || '无'}
                   </span>
                 </div>
               )}
@@ -830,14 +836,14 @@ export default function App() {
                 <div key={p.id} className="flex items-center gap-2.5 px-3 py-2 rounded-xl"
                   style={{
                     background: p.isAlive ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.3)',
-                    border: p.id === HUMAN_ID ? `1px solid ${RC[hr]}40` : '1px solid rgba(255,255,255,0.05)',
+                    border: p.id === hid ? `1px solid ${RC[hr]}40` : '1px solid rgba(255,255,255,0.05)',
                     opacity: p.isAlive ? 1 : 0.45,
                   }}>
                   <span className="text-[10px] font-mono opacity-20 w-4 text-right">{p.id}</span>
                   <span className="text-base">{known ? ROLE_ICONS[p.role] : '❓'}</span>
                   <span className="text-xs flex-1 truncate"
-                    style={{ color: p.id === HUMAN_ID ? RC[hr] : '#ccc', textDecoration: p.isAlive ? 'none' : 'line-through' }}>
-                    {p.id === HUMAN_ID ? '你' : p.name}
+                    style={{ color: p.id === hid ? RC[hr] : '#ccc', textDecoration: p.isAlive ? 'none' : 'line-through' }}>
+                    {p.id === hid ? '你' : p.name}
                   </span>
                   {!p.isAlive && <span className="text-[9px] opacity-30">{publicDeath(p.deathReason)}</span>}
                   {p.id === gs.sheriffId && p.isAlive && <Crown className="w-3 h-3 flex-shrink-0" style={{ color: '#fbbf24' }} />}
@@ -956,7 +962,7 @@ export default function App() {
                       style={{ background: 'rgba(224,82,82,0.1)', border: '1px solid rgba(224,82,82,0.25)' }}>
                       <span className="opacity-50">🐺 队友：</span>
                       <span className="font-bold ml-1" style={{ color: '#e05252' }}>
-                        {gs.players.filter(p => p.role === Role.WEREWOLF && p.id !== HUMAN_ID && p.isAlive).map(p => `${p.id}号`).join('、') || '无'}
+                        {gs.players.filter(p => p.role === Role.WEREWOLF && p.id !== hid && p.isAlive).map(p => `${p.id}号`).join('、') || '无'}
                       </span>
                       <div className="text-[10px] opacity-30 mt-0.5">所有狼人各提名一人，得票最多者被击杀</div>
                     </div>
@@ -980,11 +986,11 @@ export default function App() {
                   <Panel label="女巫：使用你的药" color={RC[Role.WITCH]}>
                     <div className="text-center text-[11px] mb-2 opacity-40">
                       {gs.nightKilledId
-                        ? (gs.nightKilledId === HUMAN_ID ? '今晚被刀的是你自己，不可自救。' : `今晚 ${gs.nightKilledId}号 被狼人击杀。`)
+                        ? (gs.nightKilledId === hid ? '今晚被刀的是你自己，不可自救。' : `今晚 ${gs.nightKilledId}号 被狼人击杀。`)
                         : '今晚无人被击杀。'}
                     </div>
                     <Btns>
-                      {gs.witchStatus.hasSavePotion && !!gs.nightKilledId && gs.nightKilledId !== HUMAN_ID && (
+                      {gs.witchStatus.hasSavePotion && !!gs.nightKilledId && gs.nightKilledId !== hid && (
                         <Btn color={RC[Role.WITCH]} onClick={() => hWitch('save')}>💊 救{gs.nightKilledId}号</Btn>
                       )}
                       {gs.witchStatus.hasPoisonPotion && alive.filter(p => !p.isHuman && p.id !== gs.nightKilledId).map(p =>
@@ -1032,7 +1038,7 @@ export default function App() {
                   <p className="text-center opacity-40 text-sm italic">其他玩家正在决定是否上警...</p>
                 )}
 
-                {phase === Phase.SHERIFF_SPEECH && gs.currentDiscussionIndex === HUMAN_ID && (
+                {phase === Phase.SHERIFF_SPEECH && gs.currentDiscussionIndex === hid && (
                   <div className="space-y-2">
                     <div className="text-center text-[11px] opacity-50">
                       轮到你竞选发言 · 上警名单：{gs.sheriffCandidates.map(id => `${id}号`).join('、')}
@@ -1040,7 +1046,7 @@ export default function App() {
                     <SpeechBox value={speech} onChange={setSpeech} onSubmit={submitSpeech} placeholder="输入你的竞选发言（留空则过）..." />
                   </div>
                 )}
-                {phase === Phase.SHERIFF_SPEECH && gs.currentDiscussionIndex > 0 && gs.currentDiscussionIndex !== HUMAN_ID && (
+                {phase === Phase.SHERIFF_SPEECH && gs.currentDiscussionIndex > 0 && gs.currentDiscussionIndex !== hid && (
                   <p className="text-center opacity-40 text-sm italic">{gs.currentDiscussionIndex}号正在竞选发言...</p>
                 )}
 
@@ -1055,7 +1061,7 @@ export default function App() {
                 )}
                 {phase === Phase.SHERIFF_VOTE && !humanIsSheriffVoter && (
                   <p className="text-center opacity-40 text-sm italic">
-                    {gs.sheriffCandidates.includes(HUMAN_ID) ? '你是候选人，不参与投票。等待计票...' : '正在计票...'}
+                    {gs.sheriffCandidates.includes(hid) ? '你是候选人，不参与投票。等待计票...' : '正在计票...'}
                   </p>
                 )}
                 {phase === Phase.SHERIFF_RESULT && <CenterBtn onClick={advance}>确认结果</CenterBtn>}
@@ -1083,10 +1089,10 @@ export default function App() {
                     </Btns>
                   </div>
                 )}
-                {phase === Phase.DAY_DISCUSSION && gs.currentDiscussionIndex === HUMAN_ID && (
+                {phase === Phase.DAY_DISCUSSION && gs.currentDiscussionIndex === hid && (
                   <SpeechBox value={speech} onChange={setSpeech} onSubmit={submitSpeech} placeholder="轮到你发言（留空则过）..." />
                 )}
-                {phase === Phase.DAY_DISCUSSION && gs.currentDiscussionIndex > 0 && gs.currentDiscussionIndex !== HUMAN_ID && (
+                {phase === Phase.DAY_DISCUSSION && gs.currentDiscussionIndex > 0 && gs.currentDiscussionIndex !== hid && (
                   <p className="text-center opacity-40 text-sm italic">{gs.currentDiscussionIndex}号正在发言...</p>
                 )}
 
@@ -1183,15 +1189,18 @@ export default function App() {
 function VillageTable({ players, activeId, sheriffId, idiotId, humanRole, revealAll }: {
   players: Player[]; activeId: number; sheriffId?: number; idiotId?: number; humanRole: Role; revealAll: boolean;
 }) {
+  const humanIndex = Math.max(0, players.findIndex(p => p.isHuman));
   return (
     <section className="village-table hidden md:block" aria-label="村庄圆桌">
       <div className="table-core"><div className="table-mark">W</div><div className="table-caption">灰雾村议会</div></div>
       {players.map((p, index) => {
-        const angle = (index / players.length) * Math.PI * 2 - Math.PI / 2;
+        const angle = ((index - humanIndex) / players.length) * Math.PI * 2 + Math.PI / 2;
         const known = revealAll || p.isHuman || (humanRole === Role.WEREWOLF && p.role === Role.WEREWOLF) || p.id === idiotId;
         return <div key={p.id} className={`table-player ${activeId === p.id ? 'is-speaking' : ''} ${p.isAlive ? '' : 'is-dead'}`}
           style={{ left: `${50 + Math.cos(angle) * 43}%`, top: `${50 + Math.sin(angle) * 39}%` }}>
-          <div className="player-token"><span>{known ? ROLE_ICONS[p.role] : p.id}</span>
+          <div className="player-token">
+            {!p.isHuman && <img src={CHARACTER_ART[p.name]} alt="" onError={e => { e.currentTarget.style.display = 'none'; }} />}
+            <span>{known ? ROLE_ICONS[p.role] : p.id}</span>
             {p.id === sheriffId && p.isAlive && <Crown className="token-crown" />}</div>
           <div className="token-name">{p.id} · {p.isHuman ? '你' : p.name}</div>
         </div>;
@@ -1252,3 +1261,4 @@ function SpeechBox({ value, onChange, onSubmit, placeholder }:
     </div>
   );
 }
+

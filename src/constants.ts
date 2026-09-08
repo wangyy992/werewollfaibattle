@@ -1,9 +1,6 @@
 import { Role } from './types';
 
 export const PLAYER_COUNT = 12;
-/** The human always sits in seat 1. */
-export const HUMAN_ID = 1;
-
 /** Non-villager good roles — "神职". Used by the 屠边 win check. */
 export const GOD_ROLES: Role[] = [Role.SEER, Role.WITCH, Role.HUNTER, Role.GUARD, Role.IDIOT];
 
@@ -45,18 +42,18 @@ export const ROLE_ICONS: Record<Role, string> = {
 
 /** Stable table personalities. A seat keeps its voice regardless of the role it
  * draws, so players cannot learn to read identity from writing style. */
-export const AI_PERSONAS: Record<number, { name: string; voice: string; instinct: string }> = {
-  2:  { name: '老钟', voice: '话少、谨慎，常用短句，不轻易把话说死', instinct: '先找前后矛盾，再决定站边' },
-  3:  { name: '伊芙', voice: '冷静直接，习惯点名追问，不说客套话', instinct: '重视发言动机与受益者' },
-  4:  { name: '铁匠', voice: '脾气直，被怀疑时会正面反驳，偶尔口语化停顿', instinct: '更相信票型而不是漂亮发言' },
-  5:  { name: '修士', voice: '克制、有条理，但每次只讲一两个重点', instinct: '对比玩家前后两轮的立场' },
-  6:  { name: '米拉', voice: '敏感、犹豫，会自然地修正自己的判断', instinct: '观察谁在替谁解围' },
-  7:  { name: '猎户', voice: '自信强势，喜欢给出明确归票目标', instinct: '用压力测试可疑玩家的反应' },
-  8:  { name: '诺亚', voice: '慢热寡言，不重复场上共识，关键时刻才表态', instinct: '关注沉默者和边缘位置' },
-  9:  { name: '薇拉', voice: '语气温和但观察细，常从细节提出疑点', instinct: '关注措辞变化和回避问题' },
-  10: { name: '酒馆老板', voice: '世故、口语化，会用反问，但不故意插科打诨', instinct: '判断谁在顺势带节奏' },
-  11: { name: '阿兰', voice: '年轻冲动，立场鲜明，也可能承认自己判断错了', instinct: '重视自己被谁攻击或保护' },
-  12: { name: '药草师', voice: '沉稳简洁，习惯先复盘事实再下结论', instinct: '优先分析夜间结果与关键票' },
+export const AI_PERSONAS: Record<string, { voice: string; instinct: string }> = {
+  '老钟': { voice: '话少、谨慎，常用短句，不轻易把话说死', instinct: '先找前后矛盾，再决定站边' },
+  '伊芙': { voice: '冷静直接，习惯点名追问，不说客套话', instinct: '重视发言动机与受益者' },
+  '铁匠': { voice: '脾气直，被怀疑时会正面反驳，偶尔口语化停顿', instinct: '更相信票型而不是漂亮发言' },
+  '修士': { voice: '克制、有条理，但每次只讲一两个重点', instinct: '对比玩家前后两轮的立场' },
+  '米拉': { voice: '敏感、犹豫，会自然地修正自己的判断', instinct: '观察谁在替谁解围' },
+  '猎户': { voice: '自信强势，喜欢给出明确归票目标', instinct: '用压力测试可疑玩家的反应' },
+  '诺亚': { voice: '慢热寡言，不重复场上共识，关键时刻才表态', instinct: '关注沉默者和边缘位置' },
+  '薇拉': { voice: '语气温和但观察细，常从细节提出疑点', instinct: '关注措辞变化和回避问题' },
+  '酒馆老板': { voice: '世故、口语化，会用反问，但不故意插科打诨', instinct: '判断谁在顺势带节奏' },
+  '阿兰': { voice: '年轻冲动，立场鲜明，也可能承认自己判断错了', instinct: '重视自己被谁攻击或保护' },
+  '渡鸦使者': { voice: '低沉警觉，惜字如金，偶尔用反问施压', instinct: '关注信息出现的时机和不自然的巧合' },
 };
 
 // ─── System Prompt ────────────────────────────────────────────────────────────
@@ -137,3 +134,4 @@ export const SYSTEM_PROMPT = `你正在参与一局12人狼人杀标准局。
 3. 投票必须给出明确理由。
 4. 符合自己的身份逻辑——好人找狼，狼人伪装。
 `;
+
