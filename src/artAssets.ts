@@ -1,27 +1,34 @@
 import { Role } from './types';
 
 export const CHARACTER_ART: Record<string, string> = {
-  '老钟': '/images/characters/bell-keeper.webp',
-  '伊芙': '/images/characters/tailor-eve.webp',
-  '铁匠': '/images/characters/blacksmith.webp',
-  '修士': '/images/characters/monk.webp',
-  '米拉': '/images/characters/baker-mira.webp',
-  '猎户': '/images/characters/hunter.webp',
-  '诺亚': '/images/characters/carpenter-noah.webp',
-  '薇拉': '/images/characters/weaver-vera.webp',
-  '酒馆老板': '/images/characters/tavern-keeper.webp',
-  '阿兰': '/images/characters/stable-hand-alan.webp',
-  '渡鸦使者': '/images/characters/raven-messenger.webp',
+  '老钟': '/images/characters/bell-keeper.jpg',
+  '伊芙': '/images/characters/tailor-eve.jpg',
+  '铁匠': '/images/characters/blacksmith.jpg',
+  '修士': '/images/characters/monk.jpg',
+  '米拉': '/images/characters/baker-mira.jpg',
+  '猎户': '/images/characters/hunter.jpg',
+  '诺亚': '/images/characters/carpenter-noah.jpg',
+  '薇拉': '/images/characters/weaver-vera.jpg',
+  '酒馆老板': '/images/characters/tavern-keeper.jpg',
+  '阿兰': '/images/characters/stable-hand-alan.jpg',
+  '渡鸦使者': '/images/characters/raven-messenger.jpg',
 };
 
 export const ROLE_ART: Record<Role, string> = {
-  [Role.WEREWOLF]: '/images/roles/role-werewolf.webp',
-  [Role.SEER]: '/images/roles/role-seer.webp',
-  [Role.WITCH]: '/images/roles/role-witch.webp',
-  [Role.HUNTER]: '/images/roles/role-hunter.webp',
-  [Role.IDIOT]: '/images/roles/role-idiot.webp',
-  [Role.VILLAGER]: '/images/roles/role-villager.webp',
-  [Role.GUARD]: '/images/roles/role-villager.webp',
+  [Role.WEREWOLF]: '/images/roles/role-werewolf.jpg',
+  [Role.SEER]: '/images/roles/role-seer.jpg',
+  [Role.WITCH]: '/images/roles/role-witch.jpg',
+  [Role.HUNTER]: '/images/roles/role-hunter.jpg',
+  [Role.IDIOT]: '/images/roles/role-idiot.jpg',
+  [Role.VILLAGER]: '/images/roles/role-villager.jpg',
+  [Role.GUARD]: '/images/roles/role-villager.jpg',
+};
+
+// Retained for a future special-wolf ruleset; the standard 12-player game does
+// not deal this role because “预女猎白” uses the Idiot, not the White Wolf King.
+export const EXPANSION_ART = {
+  whiteWolfKing: '/images/roles/role-white-wolf-king.jpg',
+  whiteWolfKingVideo: '/videos/roles/white-wolf-king.mp4',
 };
 
 export const ROLE_VIDEO: Partial<Record<Role, string>> = {

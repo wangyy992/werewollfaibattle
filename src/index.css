@@ -100,7 +100,9 @@ button { cursor: pointer; }
 .table-player { position:absolute; transform:translate(-50%,-50%); display:flex; flex-direction:column; align-items:center; gap:4px; transition:.35s ease; z-index:2; }
 .player-token { width:46px; height:46px; border-radius:50%; display:grid; place-items:center; position:relative; color:#d8cdb9; font:700 13px Georgia,serif; background:linear-gradient(145deg,#242830,#0a0d12); border:1px solid rgba(218,189,126,.38); box-shadow:0 8px 18px #000b,inset 0 1px 0 #ffffff18; }
 .player-token img { position:absolute; inset:2px; width:calc(100% - 4px); height:calc(100% - 4px); object-fit:cover; object-position:top center; border-radius:50%; filter:saturate(.72) brightness(.78); }
-.player-token span { position:relative; z-index:1; text-shadow:0 2px 5px #000,0 0 7px #000; }
+.player-token .seat-number { position:relative; z-index:1; text-shadow:0 2px 5px #000,0 0 7px #000; }
+.player-token .role-badge { position:absolute; right:-5px; bottom:-5px; z-index:3; width:20px; height:20px; display:grid; place-items:center; border-radius:50%; font-size:11px; background:#111820; border:1px solid #c7a45d; box-shadow:0 3px 8px #000; }
+.player-token .wolf-mate-mark { position:absolute; left:50%; top:-17px; z-index:3; transform:translateX(-50%); font-size:18px; line-height:1; filter:drop-shadow(0 2px 3px #000); }
 .token-crown { position:absolute; width:16px; height:16px; top:-11px; color:#e7ba58; filter:drop-shadow(0 2px 4px #000); }
 .token-name { max-width:92px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#b7ab96; font-size:9px; text-shadow:0 2px 5px #000; }
 .table-player.is-speaking { transform:translate(-50%,-50%) scale(1.18); z-index:4; }

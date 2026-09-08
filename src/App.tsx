@@ -1199,8 +1199,11 @@ function VillageTable({ players, activeId, sheriffId, idiotId, humanRole, reveal
         return <div key={p.id} className={`table-player ${activeId === p.id ? 'is-speaking' : ''} ${p.isAlive ? '' : 'is-dead'}`}
           style={{ left: `${50 + Math.cos(angle) * 43}%`, top: `${50 + Math.sin(angle) * 39}%` }}>
           <div className="player-token">
-            {!p.isHuman && <img src={CHARACTER_ART[p.name]} alt="" onError={e => { e.currentTarget.style.display = 'none'; }} />}
-            <span>{known ? ROLE_ICONS[p.role] : p.id}</span>
+            <img src={p.isHuman ? ROLE_ART[p.role] : CHARACTER_ART[p.name]} alt="" onError={e => { e.currentTarget.style.display = 'none'; }} />
+            <span className={known ? 'role-badge' : 'seat-number'}>{known ? ROLE_ICONS[p.role] : p.id}</span>
+            {humanRole === Role.WEREWOLF && p.role === Role.WEREWOLF && !p.isHuman && (
+              <span className="wolf-mate-mark" title="你的狼人队友" aria-label="你的狼人队友">🐺</span>
+            )}
             {p.id === sheriffId && p.isAlive && <Crown className="token-crown" />}</div>
           <div className="token-name">{p.id} · {p.isHuman ? '你' : p.name}</div>
         </div>;
