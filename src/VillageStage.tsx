@@ -42,7 +42,7 @@ function Resident({ src, portrait }: { src: string; portrait: boolean }) {
 
 const positions = [
   [9,53,.85],[25,53,.85],[41,53,.85],[59,53,.85],[75,53,.85],[91,53,.85],
-  [91,88,1],[75,88,1],[59,88,1],[41,88,1],[25,88,1],[9,88,1],
+  [91,91,1],[75,91,1],[59,91,1],[41,91,1],[25,91,1],[9,91,1],
 ];
 
 export function VillageStage({players,activeId,sheriffId,idiotId,humanRole,seerRecords,revealAll,selected,selectable,candidates,onSelect,logs,busy}:{
