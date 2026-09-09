@@ -8,8 +8,10 @@ import {
   buildSpeakingOrder, firstSpeaker, tallyVotes,
 } from './lib/gameUtils';
 import * as AI from './services/aiService';
-import villageSquare from './assets/village-square.png';
-import { CHARACTER_ART, ROLE_ART, ROLE_VIDEO } from './artAssets';
+import villageSquare from './assets/village-stage.png';
+import { ROLE_ART, ROLE_VIDEO } from './artAssets';
+import { VillageStage } from './VillageStage';
+import './stage.css';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const RC: Record<Role, string> = {
@@ -105,6 +107,10 @@ export default function App() {
   const [speech, setSpeech] = useState('');
   const [mobileTab, setMobileTab] = useState<'game' | 'players'>('game');
   const [showIdentity, setShowIdentity] = useState(true);
+  const [entrance, setEntrance] = useState<'welcome' | 'draw' | 'play'>('welcome');
+  const [journal, setJournal] = useState(false);
+  const [selected, setSelected] = useState<number | null>(null);
+  useEffect(() => setSelected(null), [gs.phase]);
   const [discussionOpen, setDiscussionOpen] = useState(false);
   const [questionTarget, setQuestionTarget] = useState<number | null>(null);
   const [questionText, setQuestionText] = useState('');
@@ -679,6 +685,7 @@ export default function App() {
     setSpeech('');
     setBusy(false);
     setShowIdentity(true);
+    setEntrance('welcome');
     setDiscussionOpen(false);
     setQuestionTarget(null);
     setQuestionText('');
@@ -712,6 +719,21 @@ export default function App() {
     (phase === Phase.NIGHT_SEER && iAm(Role.SEER)) ||
     (phase === Phase.NIGHT_WITCH && iAm(Role.WITCH));
 
+  const stageCandidates = alive.filter(p => {
+    if (phase === Phase.SHERIFF_VOTE) return gs.sheriffCandidates.includes(p.id);
+    if (phase === Phase.NIGHT_WOLVES) return p.role !== Role.WEREWOLF;
+    if (phase === Phase.NIGHT_SEER) return !p.isHuman && !gs.seerRecords.some(r=>r.targetId===p.id);
+    if (phase === Phase.NIGHT_WITCH) return !p.isHuman && p.id!==gs.nightKilledId;
+    return !p.isHuman && (phase !== Phase.DAY_VOTING || p.id!==gs.idiotRevealedId);
+  }).map(p=>p.id);
+  const stageSelectable = !busy && ((phase===Phase.DAY_VOTING && humanCanDayVote) ||
+    (phase===Phase.SHERIFF_VOTE && humanIsSheriffVoter) ||
+    (phase===Phase.NIGHT_WOLVES && iAm(Role.WEREWOLF)) ||
+    (phase===Phase.NIGHT_SEER && iAm(Role.SEER)) ||
+    (phase===Phase.NIGHT_WITCH && iAm(Role.WITCH) && gs.witchStatus.hasPoisonPotion) ||
+    (phase===Phase.HUNTER_SHOOT && pendingHunterIsHuman) ||
+    (phase===Phase.SHERIFF_ACTION && sheriffIsHuman));
+  const selectionLabel = selected ? `已选择 ${selected}号 · ${gs.players.find(p=>p.id===selected)?.name}` : '点击广场上的人物选择目标';
   const beginNight = () => {
     setShowIdentity(false);
     goto(Phase.NIGHT_GUARD);
@@ -722,11 +744,12 @@ export default function App() {
   return (
     <div className="game-shell h-[100dvh] flex flex-col overflow-hidden text-white"
       style={{
-        backgroundImage: `linear-gradient(rgba(4,8,15,.38),rgba(4,7,13,.82)),url(${villageSquare})`,
+        backgroundImage: `linear-gradient(rgba(4,8,15,.08),rgba(4,7,13,.26)),url(${villageSquare})`,
         fontFamily: "'Noto Serif SC','Songti SC',serif",
       }}>
 
-      {showIdentity && hp && (
+      {entrance !== 'play' && <div className="entrance-screen"><small>十二个村民 · 一个秘密</small><h1>灰雾村</h1><p>{entrance === 'welcome' ? '钟声响过，谁还能见到黎明？' : '触碰一张牌，揭开你的命运。座位将随机分配。'}</p>{entrance === 'welcome' ? <button onClick={() => setEntrance('draw')}>进入村庄</button> : <div className="draw-deck">{Array.from({length:12},(_,i)=><button key={i} style={{animationDelay:`${i*.045}s`}} aria-label={`抽取第${i+1}张身份牌`} onClick={()=>setEntrance('play')}><span>☽</span><small>灰雾村</small></button>)}</div>}</div>}
+      {entrance === 'play' && showIdentity && hp && (
         <div className={`identity-reveal identity-${hr.toLowerCase()}`} role="dialog" aria-modal="true">
           <img className="identity-hero" src={ROLE_ART[hr]} alt="" onError={e => { e.currentTarget.style.display = 'none'; }} />
           <video className="identity-video" src={ROLE_VIDEO[hr]} autoPlay muted playsInline
@@ -764,181 +787,17 @@ export default function App() {
 
       <div className="flex-1 flex overflow-hidden min-h-0">
 
-        {/* ── Sidebar ── */}
-        <aside className={`${mobileTab === 'players' ? 'flex' : 'hidden'} lg:flex w-full lg:w-64 flex-shrink-0 flex-col overflow-hidden`}
-          style={{ background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(16px)', borderRight: '1px solid rgba(255,255,255,0.07)' }}>
-
-          <div className="px-5 pt-5 pb-4 border-b flex-shrink-0" style={{ borderColor: 'rgba(255,255,255,0.07)' }}>
-            <div className="flex items-center gap-3">
-              <div className="text-3xl">🐺</div>
-              <div>
-                <div className="font-black tracking-[0.25em] text-base" style={{ color: '#e8c97a' }}>狼 人 杀</div>
-                <div className="text-[10px] tracking-widest opacity-30 uppercase">AI Battle · Day {day}</div>
-              </div>
-            </div>
-          </div>
-
-          {hp && (
-            <div className="mx-4 mt-4 p-4 rounded-2xl relative overflow-hidden flex-shrink-0"
-              style={{ background: `linear-gradient(135deg,${RC[hr]}22,${RC[hr]}08)`, border: `1px solid ${RC[hr]}44` }}>
-              <div className="absolute -right-4 -top-4 text-6xl opacity-10">{ROLE_ICONS[hr]}</div>
-              <div className="text-[10px] uppercase tracking-widest opacity-40 mb-2">
-                你的身份{!ha && ' · 已出局'}
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">{ROLE_ICONS[hr]}</span>
-                <div>
-                  <div className="font-bold text-lg leading-tight" style={{ color: RC[hr] }}>{ROLE_LABELS[hr]}</div>
-                  <div className="text-[10px] opacity-40">{getSide(hr) === Side.GOOD ? '好人阵营' : '狼人阵营'}</div>
-                </div>
-              </div>
-              {hr === Role.WEREWOLF && (
-                <div className="mt-3 pt-3 border-t text-xs" style={{ borderColor: `${RC[hr]}30` }}>
-                  <span className="opacity-40">队友：</span>
-                  <span style={{ color: RC[hr] }}>
-                    {gs.players.filter(p => p.role === Role.WEREWOLF && p.id !== hid && p.isAlive).map(p => `${p.id}号`).join('、') || '无'}
-                  </span>
-                </div>
-              )}
-              {hr === Role.SEER && gs.seerRecords.length > 0 && (
-                <div className="mt-3 pt-3 border-t space-y-1" style={{ borderColor: `${RC[hr]}30` }}>
-                  <div className="text-[10px] opacity-40 uppercase tracking-widest">查验记录</div>
-                  {gs.seerRecords.map((r, i) => (
-                    <div key={i} className="flex justify-between text-xs font-mono">
-                      <span className="opacity-60">{r.targetId}号</span>
-                      <span style={{ color: r.side === Side.GOOD ? '#52e090' : '#e05252' }}>
-                        {r.side === Side.GOOD ? '✅ 好人' : '❌ 狼人'}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {hr === Role.WITCH && (
-                <div className="mt-3 pt-3 border-t flex gap-4 text-xs" style={{ borderColor: `${RC[hr]}30` }}>
-                  <span style={{ color: gs.witchStatus.hasSavePotion ? '#52e090' : '#555' }}>💊 解药{gs.witchStatus.hasSavePotion ? '' : '(已用)'}</span>
-                  <span style={{ color: gs.witchStatus.hasPoisonPotion ? '#e05252' : '#555' }}>🧪 毒药{gs.witchStatus.hasPoisonPotion ? '' : '(已用)'}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          <div className="flex-1 overflow-y-auto px-4 mt-4 pb-20 lg:pb-4 space-y-1.5">
-            <div className="text-[10px] uppercase tracking-widest opacity-30 mb-2">
-              玩家列表 · 存活{alive.length}/{gs.players.length}
-            </div>
-            {gs.players.map(p => {
-              // Roles stay hidden until the game ends — the human only knows
-              // what their own role has earned them.
-              const known = over || p.isHuman
-                || (hr === Role.WEREWOLF && p.role === Role.WEREWOLF)
-                || p.id === gs.idiotRevealedId;
-              return (
-                <div key={p.id} className="flex items-center gap-2.5 px-3 py-2 rounded-xl"
-                  style={{
-                    background: p.isAlive ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.3)',
-                    border: p.id === hid ? `1px solid ${RC[hr]}40` : '1px solid rgba(255,255,255,0.05)',
-                    opacity: p.isAlive ? 1 : 0.45,
-                  }}>
-                  <span className="text-[10px] font-mono opacity-20 w-4 text-right">{p.id}</span>
-                  <span className="text-base">{known ? ROLE_ICONS[p.role] : '❓'}</span>
-                  <span className="text-xs flex-1 truncate"
-                    style={{ color: p.id === hid ? RC[hr] : '#ccc', textDecoration: p.isAlive ? 'none' : 'line-through' }}>
-                    {p.id === hid ? '你' : p.name}
-                  </span>
-                  {!p.isAlive && <span className="text-[9px] opacity-30">{publicDeath(p.deathReason)}</span>}
-                  {p.id === gs.sheriffId && p.isAlive && <Crown className="w-3 h-3 flex-shrink-0" style={{ color: '#fbbf24' }} />}
-                  {!p.isAlive && <Skull className="w-3 h-3 opacity-20 flex-shrink-0" />}
-                  {p.id === gs.idiotRevealedId && <span className="text-[10px]">🃏</span>}
-                </div>
-              );
-            })}
-          </div>
-        </aside>
-
-        {/* ── Main ── */}
-        <main className={`${mobileTab === 'game' ? 'flex' : 'hidden'} lg:flex flex-1 flex-col min-h-0 overflow-hidden`}>
-
-          <header className="flex-shrink-0 px-4 py-3 flex items-center justify-between"
-            style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center"
-                style={{
-                  background: isNight ? 'rgba(139,92,246,0.2)' : 'rgba(251,191,36,0.2)',
-                  border: isNight ? '1px solid rgba(139,92,246,0.4)' : '1px solid rgba(251,191,36,0.4)',
-                }}>
-                {isNight ? <Moon className="w-4 h-4" style={{ color: '#a78bfa' }} /> : <Sun className="w-4 h-4" style={{ color: '#fbbf24' }} />}
-              </div>
-              <div>
-                <div className="text-[10px] opacity-30 uppercase tracking-widest">第 {day} 天</div>
-                <div className="text-sm font-bold" style={{ color: '#e8c97a' }}>{PHASE_LABEL[phase] || phase}</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="lg:hidden px-2 py-1 rounded-lg text-xs font-bold"
-                style={{ background: `${RC[hr]}20`, border: `1px solid ${RC[hr]}40`, color: RC[hr] }}>
-                {ROLE_ICONS[hr]} {ROLE_LABELS[hr]}
-              </div>
-              {busy && (
-                <div className="flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px]"
-                  style={{ background: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: '1px solid rgba(251,191,36,0.2)' }}>
-                  <motion.div className="w-1.5 h-1.5 rounded-full bg-yellow-400"
-                    animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1, repeat: Infinity }} />
-                  思考中
-                </div>
-              )}
-              <button onClick={reset} className="p-2 rounded-lg opacity-40 hover:opacity-80" style={{ background: 'rgba(255,255,255,0.05)' }}>
-                <RotateCcw className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </header>
-
-          {!AI.AI_ENABLED && (
-            <div className="flex-shrink-0 px-4 py-2 flex items-start gap-2 text-[11px]"
-              style={{ background: 'rgba(224,82,82,0.12)', borderBottom: '1px solid rgba(224,82,82,0.25)', color: '#f0a0a0' }}>
-              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-              <span>未检测到 API Key，AI 玩家将使用离线兜底逻辑（发言为预设文本）。在 <code>.env.local</code> 中设置 <code>VITE_DEEPSEEK_API_KEY</code> 后重启开发服务器。</span>
-            </div>
-          )}
-
-          <VillageTable players={gs.players} activeId={gs.currentDiscussionIndex}
-            sheriffId={gs.sheriffId} idiotId={gs.idiotRevealedId} humanRole={hr} revealAll={over} />
-
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-2 pb-4">
-            <AnimatePresence initial={false}>
-              {gs.logs.map(l => (
-                <motion.div key={l.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="flex gap-3 items-start">
-                  <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 text-xs"
-                    style={{
-                      background: l.type === 'wolf' ? 'rgba(224,82,82,0.15)' : l.type === 'seer' ? 'rgba(167,139,250,0.15)'
-                        : l.type === 'witch' ? 'rgba(52,211,153,0.15)' : l.type === 'vote' ? 'rgba(251,191,36,0.12)' : 'rgba(255,255,255,0.06)',
-                      color: l.type === 'wolf' ? '#e05252' : l.type === 'seer' ? '#a78bfa'
-                        : l.type === 'witch' ? '#34d399' : l.type === 'vote' ? '#fbbf24' : '#888',
-                    }}>
-                    {l.type === 'wolf' ? '🐺' : l.type === 'seer' ? '🔮' : l.type === 'witch' ? '🧙'
-                      : l.type === 'guard' ? '🛡' : l.type === 'hunter' ? '🏹' : l.type === 'idiot' ? '🃏'
-                      : l.type === 'vote' ? '⚖' : l.type === 'discussion' ? '💬' : '📜'}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    {l.playerName && (
-                      <span className="text-[10px] font-bold uppercase tracking-widest mr-2" style={{ color: '#e8c97a', opacity: 0.7 }}>
-                        {l.playerName}
-                      </span>
-                    )}
-                    {l.secret && <span className="text-[9px] mr-1.5 opacity-40">🔒仅你可见</span>}
-                    <span className={`text-sm leading-relaxed ${l.type === 'discussion' ? 'italic' : ''}`}
-                      style={{ color: l.type === 'discussion' ? '#e8d5b0' : 'rgba(255,255,255,0.55)' }}>
-                      {l.message}
-                    </span>
-                  </div>
-                </motion.div>
-              ))}
-            </AnimatePresence>
-            <div ref={logEnd} />
-          </div>
-
+        <main className="scene-main">
+          <header className="scene-header"><div className="village-brand">灰雾村 <small>THE HOLLOW</small></div><div className="phase-chip">{isNight ? <Moon size={18}/> : <Sun size={18}/>} 第 {day} 天 · {PHASE_LABEL[phase]}</div><nav><button onClick={()=>setJournal(!journal)}>卷宗 {journal ? '收起' : '展开'}</button><button onClick={reset} aria-label="重新开始"><RotateCcw size={16}/></button></nav></header>
+          <VillageStage players={gs.players} activeId={gs.currentDiscussionIndex} sheriffId={gs.sheriffId}
+            idiotId={gs.idiotRevealedId} humanRole={hr} revealAll={over} selected={selected}
+            selectable={stageSelectable}
+            candidates={stageCandidates}
+            onSelect={setSelected} logs={gs.logs} busy={busy}/>
+          <div className="private-identity"><img src={ROLE_ART[hr]} alt=""/><div><small>{hid}号 · 你的身份</small><strong>{ROLE_LABELS[hr]}</strong><span>{alive.length}/12 人存活</span></div></div>
+          {journal && <aside className="journal-drawer"><header><h2>村庄卷宗</h2><button onClick={()=>setJournal(false)}>关闭 ×</button></header><div>{gs.logs.map(l=><article key={l.id}><small>第{l.day}天 · {l.playerName || '守夜人'} {l.secret && '· 仅你可见'}</small><p>{l.message}</p></article>)}</div></aside>}
           {/* ── Action panel ── */}
-          <div className="flex-shrink-0 px-4 py-4 min-h-28 flex items-center justify-center relative"
-            style={{ background: 'rgba(0,0,0,0.5)', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="scene-actions">
             {/* Deliberately NOT wrapped in AnimatePresence: night phases can advance
                 faster than an exit animation completes, and mode="wait" would then
                 hold the old panel forever and never mount the new controls. */}
@@ -967,8 +826,7 @@ export default function App() {
                       <div className="text-[10px] opacity-30 mt-0.5">所有狼人各提名一人，得票最多者被击杀</div>
                     </div>
                     <Btns>
-                      {alive.filter(p => p.role !== Role.WEREWOLF).map(p =>
-                        <Btn key={p.id} color={RC[Role.WEREWOLF]} onClick={() => resolveWolfKill(p.id)}>{p.id}号</Btn>)}
+                      <p className="selection-hint">{selectionLabel}</p>{selected && <Btn color={RC[Role.WEREWOLF]} onClick={()=>resolveWolfKill(selected)}>确认猎杀 {selected}号</Btn>}
                     </Btns>
                   </Panel>
                 )}
@@ -976,8 +834,7 @@ export default function App() {
                 {phase === Phase.NIGHT_SEER && iAm(Role.SEER) && (
                   <Panel label="预言家：选择查验目标" color={RC[Role.SEER]}>
                     <Btns>
-                      {alive.filter(p => !p.isHuman && !gs.seerRecords.some(r => r.targetId === p.id)).map(p =>
-                        <Btn key={p.id} color={RC[Role.SEER]} onClick={() => hCheck(p.id)}>{p.id}号</Btn>)}
+                      <p className="selection-hint">{selectionLabel}</p>{selected && <Btn color={RC[Role.SEER]} onClick={()=>hCheck(selected)}>查验 {selected}号</Btn>}
                     </Btns>
                   </Panel>
                 )}
@@ -993,8 +850,7 @@ export default function App() {
                       {gs.witchStatus.hasSavePotion && !!gs.nightKilledId && gs.nightKilledId !== hid && (
                         <Btn color={RC[Role.WITCH]} onClick={() => hWitch('save')}>💊 救{gs.nightKilledId}号</Btn>
                       )}
-                      {gs.witchStatus.hasPoisonPotion && alive.filter(p => !p.isHuman && p.id !== gs.nightKilledId).map(p =>
-                        <Btn key={p.id} color={RC[Role.WEREWOLF]} onClick={() => hWitch('poison', p.id)}>🧪 毒{p.id}号</Btn>)}
+                      {gs.witchStatus.hasPoisonPotion && <p className="selection-hint">{selectionLabel} · 使用毒药</p>}{selected && gs.witchStatus.hasPoisonPotion && <Btn color={RC[Role.WEREWOLF]} onClick={()=>hWitch('poison',selected)}>确认毒杀 {selected}号</Btn>}
                       <Btn color="#555" onClick={() => hWitch('skip')}>不操作</Btn>
                     </Btns>
                   </Panel>
@@ -1014,8 +870,7 @@ export default function App() {
                 {phase === Phase.HUNTER_SHOOT && pendingHunterIsHuman && (
                   <Panel label="你是猎人，出局后可开枪带走一人" color={RC[Role.HUNTER]}>
                     <Btns>
-                      {alive.filter(p => !p.isHuman).map(p =>
-                        <Btn key={p.id} color={RC[Role.HUNTER]} onClick={() => doHunterShot(p.id)}>{p.id}号</Btn>)}
+                      <p className="selection-hint">{selectionLabel}</p>{selected && <Btn color={RC[Role.HUNTER]} onClick={()=>doHunterShot(selected)}>确认开枪 {selected}号</Btn>}
                       <Btn color="#555" onClick={() => doHunterShot(null)}>放弃开枪</Btn>
                     </Btns>
                   </Panel>
@@ -1053,8 +908,8 @@ export default function App() {
                 {phase === Phase.SHERIFF_VOTE && humanIsSheriffVoter && (
                   <Panel label="投票选出警长" color="#fbbf24">
                     <Btns>
-                      {gs.sheriffCandidates.map(id =>
-                        <Btn key={id} color="#fbbf24" onClick={() => collectSheriffVotes(id)}>投{id}号</Btn>)}
+                      <p className="selection-hint">{selected ? `已选择 ${selected}号` : '点击广场上的候选人'}</p>
+                      {selected && <Btn color="#fbbf24" onClick={() => collectSheriffVotes(selected)}>确认选举 {selected}号</Btn>}
                       <Btn color="#555" onClick={() => collectSheriffVotes(null)}>弃权</Btn>
                     </Btns>
                   </Panel>
@@ -1069,8 +924,7 @@ export default function App() {
                 {phase === Phase.SHERIFF_ACTION && sheriffIsHuman && (
                   <Panel label="你出局了，移交或撕毁警徽" color="#fbbf24">
                     <Btns>
-                      {alive.filter(p => !p.isHuman).map(p =>
-                        <Btn key={p.id} color="#fbbf24" onClick={() => doHandoff(p.id)}>传给{p.id}号</Btn>)}
+                      <p className="selection-hint">{selectionLabel}</p>{selected && <Btn color="#fbbf24" onClick={()=>doHandoff(selected)}>传给 {selected}号</Btn>}
                       <Btn color={RC[Role.WEREWOLF]} onClick={() => doHandoff(null)}>撕毁警徽</Btn>
                     </Btns>
                   </Panel>
@@ -1123,8 +977,8 @@ export default function App() {
                 {phase === Phase.DAY_VOTING && humanCanDayVote && (
                   <Panel label={`投票放逐${gs.sheriffId ? ` · 警长${gs.sheriffId}号 1.5票` : ''}`} color={RC[Role.WEREWOLF]}>
                     <Btns>
-                      {alive.filter(p => !p.isHuman && gs.idiotRevealedId !== p.id).map(p =>
-                        <Btn key={p.id} color={RC[Role.WEREWOLF]} onClick={() => runDayVote(p.id)}>投{p.id}号</Btn>)}
+                      <p className="selection-hint">{selected ? `已选择 ${selected}号` : '点击广场上的人物，选择放逐目标'}</p>
+                      {selected && <Btn color={RC[Role.WEREWOLF]} onClick={() => runDayVote(selected)}>确认放逐 {selected}号</Btn>}
                       <Btn color="#555" onClick={() => runDayVote(null)}>弃权</Btn>
                     </Btns>
                   </Panel>
@@ -1169,49 +1023,12 @@ export default function App() {
         </main>
       </div>
 
-      {/* ── Mobile tabs ── */}
-      <div className="lg:hidden flex-shrink-0 flex border-t"
-        style={{ background: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(16px)', borderColor: 'rgba(255,255,255,0.08)' }}>
-        {(['game', 'players'] as const).map(tab => (
-          <button key={tab} onClick={() => setMobileTab(tab)}
-            className="flex-1 py-3 flex flex-col items-center gap-1 transition-all"
-            style={{ color: mobileTab === tab ? '#e8c97a' : 'rgba(255,255,255,0.3)' }}>
-            <span className="text-lg">{tab === 'game' ? '🎮' : '👥'}</span>
-            <span className="text-[10px] font-bold uppercase tracking-wider">{tab === 'game' ? '游戏' : '玩家'}</span>
-          </button>
-        ))}
-      </div>
+
     </div>
   );
 }
 
 // ── Mini components ───────────────────────────────────────────────────────────
-function VillageTable({ players, activeId, sheriffId, idiotId, humanRole, revealAll }: {
-  players: Player[]; activeId: number; sheriffId?: number; idiotId?: number; humanRole: Role; revealAll: boolean;
-}) {
-  const humanIndex = Math.max(0, players.findIndex(p => p.isHuman));
-  return (
-    <section className="village-table hidden md:block" aria-label="村庄圆桌">
-      <div className="table-core"><div className="table-mark">W</div><div className="table-caption">灰雾村议会</div></div>
-      {players.map((p, index) => {
-        const angle = ((index - humanIndex) / players.length) * Math.PI * 2 + Math.PI / 2;
-        const known = revealAll || p.isHuman || (humanRole === Role.WEREWOLF && p.role === Role.WEREWOLF) || p.id === idiotId;
-        return <div key={p.id} className={`table-player ${activeId === p.id ? 'is-speaking' : ''} ${p.isAlive ? '' : 'is-dead'}`}
-          style={{ left: `${50 + Math.cos(angle) * 43}%`, top: `${50 + Math.sin(angle) * 39}%` }}>
-          <div className="player-token">
-            <img src={p.isHuman ? ROLE_ART[p.role] : CHARACTER_ART[p.name]} alt="" onError={e => { e.currentTarget.style.display = 'none'; }} />
-            <span className={known ? 'role-badge' : 'seat-number'}>{known ? ROLE_ICONS[p.role] : p.id}</span>
-            {humanRole === Role.WEREWOLF && p.role === Role.WEREWOLF && !p.isHuman && (
-              <span className="wolf-mate-mark" title="你的狼人队友" aria-label="你的狼人队友">🐺</span>
-            )}
-            {p.id === sheriffId && p.isAlive && <Crown className="token-crown" />}</div>
-          <div className="token-name">{p.id} · {p.isHuman ? '你' : p.name}</div>
-        </div>;
-      })}
-    </section>
-  );
-}
-
 function Panel({ label, color, children }: { label: string; color: string; children: React.ReactNode }) {
   return (
     <div className="w-full space-y-3">
