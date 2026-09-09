@@ -1,4 +1,11 @@
 .game-shell { background-position:center!important; }
+.village-stage .resident { width:clamp(60px,10vw,150px); }
+.village-stage .resident-art { height:min(27vh,250px);object-fit:contain;mask-image:none; }
+.village-stage .identity-resident {mask-image:radial-gradient(ellipse,#000 35%,transparent 72%);}
+.village-stage .stage-dialogue,.village-stage .scene-announcement {top:0;bottom:auto;left:50%;right:auto;transform:translateX(-50%);width:min(760px,82vw);max-height:18vh;overflow:auto;border-radius:8px;padding:12px 20px;}
+.seer-mark {position:absolute;top:115%;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:10px;padding:3px 6px;border-radius:4px;background:#123c32;color:#b6f3d4;}
+.seer-mark.wolf {background:#541f27;color:#ffbdc4;}
+@media(max-width:700px){.village-stage .resident{width:13vw}.village-stage .resident-art{height:19vh}.village-stage .stage-dialogue,.village-stage .scene-announcement{max-height:13vh;width:90vw;padding:8px 12px}.seer-mark{font-size:8px;white-space:normal;text-align:center;width:64px}}
 .game-shell::before { background:linear-gradient(#03070c77,transparent 24%,transparent 65%,#03070caa); }
 .scene-main { position:relative; width:100%; height:100dvh; overflow:hidden; }
 .scene-header { position:absolute; z-index:110; top:0; left:0; right:0; height:76px; display:flex; align-items:center; justify-content:space-between; padding:0 32px; background:linear-gradient(#03070de0,transparent); }

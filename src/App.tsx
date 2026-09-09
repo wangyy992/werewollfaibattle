@@ -791,6 +791,7 @@ export default function App() {
           <header className="scene-header"><div className="village-brand">灰雾村 <small>THE HOLLOW</small></div><div className="phase-chip">{isNight ? <Moon size={18}/> : <Sun size={18}/>} 第 {day} 天 · {PHASE_LABEL[phase]}</div><nav><button onClick={()=>setJournal(!journal)}>卷宗 {journal ? '收起' : '展开'}</button><button onClick={reset} aria-label="重新开始"><RotateCcw size={16}/></button></nav></header>
           <VillageStage players={gs.players} activeId={gs.currentDiscussionIndex} sheriffId={gs.sheriffId}
             idiotId={gs.idiotRevealedId} humanRole={hr} revealAll={over} selected={selected}
+            seerRecords={hr===Role.SEER ? gs.seerRecords : []}
             selectable={stageSelectable}
             candidates={stageCandidates}
             onSelect={setSelected} logs={gs.logs} busy={busy}/>
