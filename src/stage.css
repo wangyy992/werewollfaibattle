@@ -1,6 +1,6 @@
 .game-shell { background-position:center!important; }
 .village-stage .resident { width:clamp(60px,10vw,150px); }
-.village-stage .resident-art { height:min(27vh,250px);object-fit:contain;mask-image:none; }
+.village-stage .resident-art { height:min(27vh,250px);object-fit:contain;object-position:center bottom;mask-image:none; }
 .village-stage .identity-resident {mask-image:radial-gradient(ellipse,#000 35%,transparent 72%);}
 .village-stage .stage-dialogue,.village-stage .scene-announcement {top:0;bottom:auto;left:50%;right:auto;transform:translateX(-50%);width:min(760px,82vw);max-height:18vh;overflow:auto;border-radius:8px;padding:12px 20px;}
 .seer-mark {position:absolute;top:115%;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:10px;padding:3px 6px;border-radius:4px;background:#123c32;color:#b6f3d4;}
