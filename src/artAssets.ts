@@ -8,8 +8,8 @@ export const CHARACTER_ART: Record<string, string> = {
   '米拉': '/images/characters/baker-mira.jpg',
   '猎户': '/images/characters/hunter.jpg',
   '诺亚': '/images/characters/carpenter-noah.jpg',
-  '薇拉': '/images/characters/weaver-vera.jpg',
-  '酒馆老板': '/images/characters/tavern-keeper.jpg',
+  '薇拉': '/images/characters/weaver-vera-repaired.png',
+  '酒馆老板': '/images/characters/tavern-keeper-repaired.png',
   '阿兰': '/images/characters/stable-hand-alan.jpg',
   '渡鸦使者': '/images/characters/raven-messenger.jpg',
 };

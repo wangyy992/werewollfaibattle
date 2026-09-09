@@ -25,6 +25,8 @@ const ai = new OpenAI({
 function buildGameContext(player: Player, gameState: GameState): string {
   const alive = gameState.players.filter(p => p.isAlive);
   const dead = gameState.players.filter(p => !p.isAlive);
+  const publicSpeeches = gameState.logs.filter(l => !l.secret && l.type === 'discussion');
+  const hasVotes = gameState.logs.some(l => !l.secret && l.type === 'vote');
 
   // `secret` logs are the human player's own private knowledge (their seer
   // checks, their wolf team's plan). Feeding them to an AI would hand it the
@@ -66,6 +68,10 @@ ${persona ? `你叫${player.name}。说话特点：${persona.voice}。判断习�
 人物性格与身份无关；不要因为抽到特殊身份而突然改变口吻。
 
 === 当前局面 ===
+【时间线约束】首夜发生在所有警上和日间发言之前。首夜验人不得引用任何白天表现。
+【公开发言数量】${publicSpeeches.length}。${publicSpeeches.length===0 ? '尚无人发言，不能评价任何人的发言、站边或前后矛盾。' : '只可引用记录中已经发言的玩家；玩家自称身份或报验是主张，不是系统确认。'}
+【票型】${hasVotes ? '只可引用已记录的投票。' : '还没有投票记录，不得编造票型。'}
+这是纯文字对局，没有眼神、表情、摸牌动作、语速或声音证据。公开职业和外观与身份无关。
 第${gameState.day}天 | 阶段：${gameState.phase}
 你是：${player.id}号（${ROLE_LABELS[player.role]}）
 ${wolfInfo}${seerInfo}${witchInfo}${sheriffInfo}${candidatesInfo}
@@ -145,13 +151,13 @@ export async function generateAIDiscussion(
   const strategies: Record<Role, string> = {
     [Role.WEREWOLF]: isSheriffPhase
       ? `你是悍跳狼，正在竞选警长伪装预言家。
-发言格式：1.宣布"我是预言家" 2.编造查验结果（给你的一个狼队友发金水，给发言最强的好人发查杀） 3.编造验人心路历程（要饱满有逻辑，如"看他摸牌时表情异常"）4.报警徽流（留给你编造的金水）。
+可以假称预言家、编造一晚一次的查验，后续必须保持假报验一致。禁止编造公开事件。首夜验人只能用随机或座位偏好解释，不得用次日发言倒推验人原因。警徽流是未来查验计划，不是警徽移交。
 注意：必须果断，不能犹豫；警徽流要有逻辑。`
       : `你是狼人（深水狼），伪装平民。
 发言策略：分析发言逻辑找合理目标带节奏；不要主动帮队友辩护（容易暴露）；适当质疑发言最强的好人；语气自然中规中矩。`,
     [Role.SEER]: isSheriffPhase
       ? `你是真预言家，必须上警竞选！
-发言格式：1."我是预言家" 2.报查验结果"昨晚验了X号，结果是【好人/狼人】" 3.说验人心路历程（选他的原因） 4.报警徽流"警徽留给X号"（留给金水或发言最强好人）。
+只报你的真实查验记录。首夜尚无白天发言，不能事后编造验人动机。警徽流是接下来准备查验的未验玩家，不是现在将警徽交给谁。
 态度要坚定自信，这是你最重要的发言。`
       : `你是预言家，结合${gameState.seerRecords.length > 0 ? "你的查验记录" : "当前局势"}发言。
 若有查杀信息：坚定呼吁出票；若有金水：让对方为你背书；分析发言逻辑找出狼人破绽。`,
@@ -190,9 +196,16 @@ ${isSheriffPhase
   try {
     const text = await callAI(prompt, true);
     const result = safeJSON<{ thought?: string; speech?: string }>(text, {});
-    return result.speech?.trim() || `${player.id === 2 ? '3' : '2'}号，你上一轮的站边理由能再说具体一点吗？`;
+    return result.speech?.trim() || `${player.id === 2 ? '3' : '2'}号，你打算怎么判断这轮竞选？`;
   } catch (error) {
     console.error("generateAIDiscussion Error:", error);
+    if (player.role === Role.SEER && gameState.seerRecords.length) {
+      return `我是预言家。${gameState.seerRecords.map(r=>`${r.targetId}号验出来是${r.side===Side.GOOD?'好人':'狼人'}`).join('，')}。先把我的验人结果说清楚。`;
+    }
+    if (!gameState.logs.some(l=>!l.secret && l.type==='discussion')) {
+      const target=gameState.players.find(p=>p.isAlive && p.id!==player.id);
+      return `${target?.id ?? player.id}号，你竞选会看重什么？现在还没人发言，我没有依据直接定谁是狼。`;
+    }
     const fallbacks: Record<Role, string> = {
       [Role.WEREWOLF]: "我觉得我们要多分析发言逻辑，不能跟风投票，先听听大家的判断。",
       [Role.SEER]: "我是预言家，我有重要的查验信息想和大家分享，请大家认真听我说。",
@@ -314,7 +327,7 @@ export async function generateAIWolfKill(player: Player, gameState: GameState): 
 可击杀目标：${targets.map(p => `${p.id}号`).join("、")}
 击杀优先级：预言家 > 女巫 > 猎人 > 守卫/白痴 > 平民
 根据白天发言表现推断神职身份，优先消灭最危险的目标。
-注意：不要连续两晚刀同一区域（会暴露刀法规律）。
+第一晚尚无白天发言，只能盲选；座位相邻本身不能证明身份。
 
 只返回JSON：{"targetId": 数字}`;
 
@@ -338,7 +351,7 @@ export async function generateAISeerCheck(player: Player, gameState: GameState):
 【预言家夜间查验】
 未验过的存活玩家：${targets.map(p => `${p.id}号`).join("、")}
 查验策略：
-- 第一晚：验白天发言最可疑的人，或发言过于强势可能是悍跳狼的人
+- 第一晚：尚无白天发言，随机选一个未验目标，不得引用尚未发生的竞选或发言
 - 第二晚起：验白天发言有逻辑漏洞的人；不要验已知身份的人
 
 只返回JSON：{"targetId": 数字}`;
