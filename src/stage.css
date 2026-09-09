@@ -1,4 +1,7 @@
 .game-shell { background-position:center!important; }
+.role-animation-trigger{font-size:11px;color:#efd395;border:1px solid #aa884966;border-radius:4px;padding:4px 7px;background:#111820;cursor:pointer}
+.role-animation-dialog{position:fixed;inset:0;margin:auto;width:min(760px,94vw);max-height:94dvh;overflow:auto;border:1px solid #a98d5a;border-radius:12px;background:#0b111a;color:#ead5ad;padding:16px;box-shadow:0 20px 80px #000b}
+.role-animation-dialog::backdrop{background:#02060bd9}.role-animation-dialog header{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:12px}.role-animation-dialog video{width:100%;height:min(70dvh,660px);object-fit:contain;background:#03070c}.role-animation-dialog p{font-size:12px;line-height:1.6;margin-top:8px}.role-animation-dialog header button{padding:8px 12px;border:1px solid #aa884966;border-radius:4px}
 .village-stage .resident { width:clamp(60px,10vw,150px); }
 .village-stage .resident-art { height:min(27vh,250px);object-fit:contain;object-position:center bottom;mask-image:none; }
 .village-stage .identity-resident {mask-image:radial-gradient(ellipse,#000 35%,transparent 72%);}

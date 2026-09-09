@@ -11,6 +11,7 @@ import * as AI from './services/aiService';
 import villageSquare from './assets/village-stage.png';
 import { ROLE_ART, ROLE_VIDEO } from './artAssets';
 import { VillageStage } from './VillageStage';
+import { RoleAnimation } from './RoleAnimation';
 import './stage.css';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
@@ -795,7 +796,7 @@ export default function App() {
             selectable={stageSelectable}
             candidates={stageCandidates}
             onSelect={setSelected} logs={gs.logs} busy={busy}/>
-          <div className="private-identity"><img src={ROLE_ART[hr]} alt=""/><div><small>{hid}号 · 你的身份</small><strong>{ROLE_LABELS[hr]}</strong><span>{alive.length}/12 人存活</span></div></div>
+          <div className="private-identity"><img src={ROLE_ART[hr]} alt=""/><div><small>{hid}号 · 你的身份</small><strong>{ROLE_LABELS[hr]}</strong><span>{alive.length}/12 人存活</span><RoleAnimation role={hr}/></div></div>
           {journal && <aside className="journal-drawer"><header><h2>村庄卷宗</h2><button onClick={()=>setJournal(false)}>关闭 ×</button></header><div>{gs.logs.map(l=><article key={l.id}><small>第{l.day}天 · {l.playerName || '守夜人'} {l.secret && '· 仅你可见'}</small><p>{l.message}</p></article>)}</div></aside>}
           {/* ── Action panel ── */}
           <div className="scene-actions">
